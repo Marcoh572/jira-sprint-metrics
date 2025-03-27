@@ -1,0 +1,13 @@
+{
+  "baseUrl": "https://your-domain.atlassian.net",
+  "email": "your-email@example.com",
+  "apiToken": "your-jira-api-token",
+  "teamVelocity": 25,
+  "currentSprint": "CLIENT Sprint 12",
+  "nextSprint": "CLIENT Sprint 13",
+  "customFields": {
+    "groomedStatus": ["TO PLAN", "TO COMMIT"],
+    "ungroomedStatus": ["TO GROOM", "TO REFINE"],
+    "storyPoints": "customfield_10016"
+  }
+}
