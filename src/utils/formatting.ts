@@ -1,8 +1,8 @@
-import { SprintData } from '../types';
+import { BoardConfig, ProgressReportData, SprintData, SprintScopeChanges } from '../types';
 import { colors } from './colors';
 import { formatBusinessDaysBreakdown } from './dates';
 
-// Function to colorize the Progress Report
+// Updated formatProgressReport function with status ordering
 export const formatProgressReport = (
   boardId: number,
   sprintName: string,
@@ -34,8 +34,16 @@ export const formatProgressReport = (
   startDate: Date,
   endDate: Date,
   currentDate: Date,
-  timeShift?: number, // Add timeShift parameter
+  timeShift?: number,
+  boardConfig?: any,
+  scopeChanges?: SprintScopeChanges, // Use the SprintScopeChanges interface
 ): string => {
+  // Get the essentially done statuses
+  const essentiallyDoneStatuses = boardConfig?.essentiallyDoneStatuses || [];
+
+  // Get the status order if specified
+  const statusOrder = boardConfig?.statusOrder || [];
+
   // Format assignee workload
   const assigneeWorkloadEntries = Object.entries(assigneeWorkload);
   const formattedWorkload = assigneeWorkloadEntries
@@ -67,7 +75,7 @@ export const formatProgressReport = (
   // Header
   output += `\n${colors.bright}${colors.cyan}=== Progress: Board ${boardId} "${sprintName}" ===${colors.reset}\n`;
 
-  // Add detailed breakdowns
+  // Add breakdown of calculation
   output += `\n${colors.bright}${colors.white}Calculation Breakdown:${colors.reset}\n`;
 
   // Remaining actual calculation
@@ -90,10 +98,45 @@ export const formatProgressReport = (
     });
   });
 
-  // Show remaining issues by status
-  Object.entries(remainingByStatus).forEach(([status, issues]) => {
+  // Get all status keys
+  const allStatusKeys = Object.keys(remainingByStatus);
+
+  // Sort status keys according to statusOrder if provided
+  let sortedStatusKeys: string[] = [];
+
+  if (statusOrder.length > 0) {
+    // First add any statuses that weren't in the order list (at the front)
+    const unknownStatuses = allStatusKeys.filter((status) => !statusOrder.includes(status));
+
+    // Sort unknown statuses alphabetically to ensure consistent order
+    unknownStatuses.sort().forEach((status: string) => {
+      sortedStatusKeys.push(status);
+    });
+
+    // Then add all statuses in the specified order
+    statusOrder.forEach((status: string) => {
+      if (allStatusKeys.includes(status)) {
+        sortedStatusKeys.push(status);
+      }
+    });
+  } else {
+    // If no statusOrder provided, use the original keys
+    sortedStatusKeys = allStatusKeys;
+  }
+
+  // Show remaining issues by status in the specified order
+  // Show remaining issues by status in the specified order
+  sortedStatusKeys.forEach((status) => {
+    const issues = remainingByStatus[status];
     const totalStatusPoints = issues.reduce((sum, issue) => sum + issue.points, 0);
-    output += `  ${colors.dim}${status}:${colors.reset} ${colors.bright}${totalStatusPoints} points${colors.reset} (${issues.length} issues)\n`;
+
+    // Add indicator if status is considered "essentially done"
+    const isEssentiallyDone = essentiallyDoneStatuses.includes(status);
+    const statusIndicator = isEssentiallyDone
+      ? ` ${colors.yellow}[NOT COUNTED IN DRIFT]${colors.reset}`
+      : '';
+
+    output += `  ${colors.dim}${status}:${colors.reset} ${colors.bright}${totalStatusPoints} points${colors.reset} (${issues.length} issues)${statusIndicator}\n`;
 
     // Only show detailed issue list if there are 10 or fewer issues or if they're high point issues
     const showDetailed = issues.length <= 10 || totalStatusPoints > 20;
@@ -101,14 +144,12 @@ export const formatProgressReport = (
       // Sort by points (highest first)
       const sortedIssues = [...issues].sort((a, b) => b.points - a.points);
 
-      // Show top issues with points
+      // Show all issues, even those with 0 points
       sortedIssues.forEach((issue) => {
-        if (issue.points > 0) {
-          // Only show issues with points
-          const trimmedSummary =
-            issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
-          output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.red}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
-        }
+        // Display all issues, including those with 0 points
+        const trimmedSummary =
+          issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
+        output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.red}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
       });
     }
   });
@@ -120,11 +161,99 @@ export const formatProgressReport = (
 
   // Calculate percentage complete without capping at 100%
   const percentComplete = Math.round((elapsedBusinessDays / totalSprintBusinessDays) * 100);
-  output += `  ${colors.dim}Days Elapsed:${colors.reset} ${colors.bright}${elapsedBusinessDays}${colors.reset} business days (${percentComplete}% complete)\n`;
 
+  // Always display the elapsedBusinessDays value that was provided - don't recalculate it
+  output += `  ${colors.dim}Days Elapsed:${colors.reset} ${colors.bright}${elapsedBusinessDays}${colors.reset} business days (${percentComplete}% complete)`;
+
+  // Add a note if time-shifted
+  if (timeShift && timeShift !== 0) {
+    output += ` ${colors.yellow}[time-shifted]${colors.reset}`;
+  }
+  output += `\n`;
+
+  // Display the expectedCompletedPoints that was actually used in calculations
   output += `  ${colors.dim}Expected Burn Rate:${colors.reset} ${colors.bright}${dailyRate}${colors.reset} points per day\n`;
   output += `  ${colors.dim}Expected Completed:${colors.reset} ${colors.bright}${expectedCompletedPoints}${colors.reset} points by now\n`;
+
+  // Make sure the math shown matches the real calculation
   output += `  ${colors.dim}Expected Remaining:${colors.reset} ${initialTotalPoints} - ${expectedCompletedPoints} = ${colors.green}${plannedRemainingPoints}${colors.reset} points\n`;
+
+  // Add Sprint Scope Changes section if available
+  if (scopeChanges) {
+    output += `\n${colors.bright}${colors.white}Sprint Scope Changes:${colors.reset}\n`;
+
+    // Show points comparison
+    const deltaColor = scopeChanges.netPointChange > 0 ? colors.red : colors.green;
+    const deltaSign = scopeChanges.netPointChange > 0 ? '+' : '';
+
+    output += `  ${colors.dim}Initial Points:${colors.reset} ${colors.bright}${scopeChanges.initialPoints}${colors.reset}\n`;
+    output += `  ${colors.dim}Current Points:${colors.reset} ${colors.bright}${scopeChanges.currentPoints}${colors.reset}\n`;
+    output += `  ${colors.dim}Net Point Change:${colors.reset} ${deltaColor}${deltaSign}${scopeChanges.netPointChange}${colors.reset}\n`;
+
+    // Show added issues (scope creep)
+    if (scopeChanges.addedIssueCount > 0) {
+      output += `\n  ${colors.red}Issues Added to Sprint${colors.reset} (+${scopeChanges.addedPoints} points):\n`;
+
+      // Sort added issues by points
+      const sortedAdded = [...scopeChanges.addedIssues].sort((a, b) => b.points - a.points);
+
+      // Show all added issues
+      sortedAdded.forEach((issue) => {
+        const trimmedSummary =
+          issue.summary && issue.summary.length > 40
+            ? issue.summary.substring(0, 37) + '...'
+            : issue.summary || 'No summary';
+        output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.red}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
+      });
+
+      // Show distribution by assignee
+      output += `\n  ${colors.dim}Added Work by Assignee:${colors.reset}\n`;
+      Object.entries(scopeChanges.addedByAssignee)
+        .sort((a, b) => b[1].points - a[1].points)
+        .forEach(([assignee, data]) => {
+          output += `    ${colors.blue}${assignee}:${colors.reset} ${colors.bright}${data.count} issues${colors.reset} (${colors.red}+${data.points} points${colors.reset})\n`;
+        });
+    }
+
+    // Show removed issues
+    if (scopeChanges.removedIssueCount > 0) {
+      output += `\n  ${colors.green}Issues Removed from Sprint${colors.reset} (-${scopeChanges.removedPoints} points):\n`;
+
+      // Sort removed issues by points
+      const sortedRemoved = [...scopeChanges.removedIssues].sort((a, b) => b.points - a.points);
+
+      // Show all removed issues
+      sortedRemoved.forEach((issue) => {
+        const trimmedSummary =
+          issue.summary && issue.summary.length > 40
+            ? issue.summary.substring(0, 37) + '...'
+            : issue.summary || 'No summary';
+        output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.green}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
+      });
+
+      // Show distribution by assignee
+      output += `\n  ${colors.dim}Removed Work by Assignee:${colors.reset}\n`;
+      Object.entries(scopeChanges.removedByAssignee)
+        .sort((a, b) => b[1].points - a[1].points)
+        .forEach(([assignee, data]) => {
+          output += `    ${colors.blue}${assignee}:${colors.reset} ${colors.bright}${data.count} issues${colors.reset} (${colors.green}-${data.points} points${colors.reset})\n`;
+        });
+    }
+
+    // Show current workload distribution
+    output += `\n  ${colors.dim}Current Workload Distribution:${colors.reset}\n`;
+
+    // We'll reuse the existing assigneeWorkload data for this
+    Object.entries(assigneeWorkload)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([assignee, points]) => {
+        output += `    ${colors.blue}${assignee}:${colors.reset} ${colors.bright}${points} points${colors.reset}\n`;
+      });
+
+    if (unassignedPoints > 0) {
+      output += `    ${colors.blue}Unassigned:${colors.reset} ${colors.bright}${unassignedPoints} points${colors.reset}\n`;
+    }
+  }
 
   // Done issues
   if (completedIssues.length > 0) {
@@ -135,20 +264,14 @@ export const formatProgressReport = (
 
     // Show top completed issues with points
     sortedCompletedIssues.forEach((issue) => {
-      if (issue.points > 0) {
-        // Only show issues with points
-        const trimmedSummary =
-          issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
-        output += `  ${colors.dim}- ${issue.key}${colors.reset} [${colors.green}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
-      }
+      const trimmedSummary =
+        issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
+      output += `  ${colors.dim}- ${issue.key}${colors.reset} [${colors.green}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
     });
   }
 
   // Drift score
   output += `\n${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Drift Score${colors.reset}${colors.reset} (Ideal is zero): ${driftColor}${driftScore}${colors.reset} = [${colors.red}${currentRemainingPoints} remaining actual${colors.reset}] - [${colors.green}${plannedRemainingPoints} remaining planned${colors.reset}]\n`;
-
-  // Burden balance
-  output += `${colors.bright}Burden Balance:${colors.reset} ${workloadWithUnassigned}\n`;
 
   // Sprint details
   output += `\n${colors.bright}${colors.white}Sprint Details:${colors.reset}\n`;
@@ -169,17 +292,26 @@ export const formatProgressReport = (
   return output;
 };
 
-// Function to format planning report
+// Updated formatPlanningReport function with a separate section for unpointed "essentially done" issues
 export const formatPlanningReport = (
   boardId: number,
   sprintName: string,
   groomed: number,
   total: number,
-  issuesByStatus: Record<string, Array<{ key: string; summary: string; assignee: string }>>,
+  issuesByStatus: Record<
+    string,
+    Array<{ key: string; summary: string; assignee: string; points?: number | null }>
+  >,
   groomedStatuses: string[],
   ungroomedStatuses: string[],
+  boardConfig?: BoardConfig,
 ): string => {
-  // Calculate risk score
+  // Get the status order if specified
+  const statusOrder = boardConfig?.statusOrder || [];
+  // Get essentially done statuses
+  const essentiallyDoneStatuses = boardConfig?.essentiallyDoneStatuses || [];
+
+  // Risk details are now passed in from the calculated risk score
   const riskScore = total > 0 ? parseFloat((1 - groomed / total).toFixed(2)) : 0;
 
   // Determine risk level
@@ -206,72 +338,176 @@ export const formatPlanningReport = (
   // Header
   output += `\n${colors.bright}${colors.cyan}=== Planning: Board ${boardId} "${sprintName}" ===${colors.reset}\n`;
 
-  // Breakdown by status
-  output += `\n${colors.bright}${colors.white}Breakdown by Status:${colors.reset}\n`;
-  output += `${colors.dim}-------------------${colors.reset}\n`;
+  // Organize issues by pointed status and workflow status
+  const pointedByStatus: Record<string, any[]> = {};
+  const unpointedByStatus: Record<string, any[]> = {};
+  const essentiallyDoneUnpointedByStatus: Record<string, any[]> = {};
 
-  // Define a custom order for statuses
-  const statusOrder = [
-    'TO REFINE',
-    'TO GROOM',
-    'TO PLAN',
-    // Add other statuses in your preferred order
-  ];
+  // Populate the status groups
+  Object.keys(issuesByStatus).forEach((status) => {
+    const statusIssues = issuesByStatus[status];
 
-  // Sort the status keys according to our custom order
-  const sortedStatusKeys = Object.keys(issuesByStatus).sort((a, b) => {
-    // Get the index of each status in our custom order (or Infinity if not found)
-    const indexA = statusOrder.indexOf(a);
-    const indexB = statusOrder.indexOf(b);
+    // Separate pointed and unpointed issues
+    const pointed = statusIssues.filter(
+      (issue) => issue.points !== null && issue.points !== undefined,
+    );
+    const unpointed = statusIssues.filter(
+      (issue) => issue.points === null || issue.points === undefined,
+    );
 
-    // If both are in our custom list, sort by their position
-    if (indexA !== -1 && indexB !== -1) {
-      return indexA - indexB;
+    if (pointed.length > 0) {
+      pointedByStatus[status] = pointed;
     }
 
-    // If only one is in our custom list, prioritize it
-    if (indexA !== -1) return -1;
-    if (indexB !== -1) return 1;
-
-    // If neither is in our custom list, maintain alphabetical order
-    return a.localeCompare(b);
+    if (unpointed.length > 0) {
+      // If status is "essentially done", put in separate category
+      if (essentiallyDoneStatuses.includes(status)) {
+        essentiallyDoneUnpointedByStatus[status] = unpointed;
+      } else {
+        unpointedByStatus[status] = unpointed;
+      }
+    }
   });
 
-  // Show issues by status in our custom order
-  sortedStatusKeys.forEach((status) => {
-    const issues = issuesByStatus[status];
-    const isGroomed = groomedStatuses.includes(status);
-    const statusCategory = isGroomed ? 'GROOMED' : 'UNGROOMED';
+  // Sort status keys according to statusOrder if provided
+  const sortStatusKeys = (statuses: string[]): string[] => {
+    if (statusOrder.length > 0) {
+      // Sort according to the defined order (and then alphabetically for any not in the order)
+      return [...statuses].sort((a, b) => {
+        const indexA = statusOrder.indexOf(a);
+        const indexB = statusOrder.indexOf(b);
 
-    // Green for groomed statuses, yellow for ungroomed
-    const statusColor = isGroomed ? colors.green : colors.yellow;
+        if (indexA !== -1 && indexB !== -1) {
+          return indexA - indexB;
+        } else if (indexA !== -1) {
+          return -1;
+        } else if (indexB !== -1) {
+          return 1;
+        } else {
+          return a.localeCompare(b);
+        }
+      });
+    }
+    return statuses.sort();
+  };
 
-    output += `${statusColor}${status}${colors.reset} (${statusColor}${statusCategory}${colors.reset}): ${colors.bright}${issues.length}${colors.reset} issues\n`;
+  // Unpointed Issues Section (Still need grooming) - excluding essentially done statuses
+  output += `\n${colors.bright}${colors.yellow}UNGROOMED ISSUES (Unpointed):${colors.reset}\n`;
+  output += `${colors.yellow}=================================${colors.reset}\n`;
 
-    // Show each issue in this status
-    issues.forEach((issue) => {
-      // Dim the issue details for better contrast with headers
-      const trimmedSummary =
-        issue.summary.length > 50 ? issue.summary.substring(0, 47) + '...' : issue.summary;
-      output += `  ${colors.dim}- ${issue.key}:${colors.reset} ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
+  const unpointedStatusKeys = sortStatusKeys(Object.keys(unpointedByStatus));
+
+  if (unpointedStatusKeys.length === 0) {
+    output += `${colors.green}No unpointed issues that need grooming!${colors.reset}\n\n`;
+  } else {
+    unpointedStatusKeys.forEach((status) => {
+      const issues = unpointedByStatus[status];
+
+      output += `${colors.yellow}${status}${colors.reset}: ${issues.length} issues\n`;
+
+      issues.forEach((issue) => {
+        const trimmedSummary =
+          issue.summary.length > 50 ? issue.summary.substring(0, 47) + '...' : issue.summary;
+        output += `  ${colors.dim}- ${issue.key}:${colors.reset} ${trimmedSummary} (${issue.assignee})\n`;
+      });
+
+      output += '\n';
     });
+  }
 
-    output += '\n'; // Add spacing between status groups
-  });
+  // Pointed Issues Section (Ready for planning)
+  output += `\n${colors.bright}${colors.green}GROOMED ISSUES (Pointed):${colors.reset}\n`;
+  output += `${colors.green}==============================${colors.reset}\n`;
+
+  const pointedStatusKeys = sortStatusKeys(Object.keys(pointedByStatus));
+
+  if (pointedStatusKeys.length === 0) {
+    output += `${colors.yellow}No pointed issues yet.${colors.reset}\n\n`;
+  } else {
+    pointedStatusKeys.forEach((status) => {
+      const issues = pointedByStatus[status];
+      const totalPoints = issues.reduce((sum, issue) => sum + (issue.points || 0), 0);
+
+      output += `${colors.green}${status}${colors.reset}: ${issues.length} issues (${totalPoints} points)\n`;
+
+      issues.forEach((issue) => {
+        const trimmedSummary =
+          issue.summary.length > 50 ? issue.summary.substring(0, 47) + '...' : issue.summary;
+        output += `  ${colors.dim}- ${issue.key}${colors.reset} [${colors.bright}${issue.points}${colors.reset}]: ${trimmedSummary} (${issue.assignee})\n`;
+      });
+
+      output += '\n';
+    });
+  }
+
+  // Unpointed essentially done issues section (No need to groom these)
+  const essentiallyDoneKeys = sortStatusKeys(Object.keys(essentiallyDoneUnpointedByStatus));
+
+  if (essentiallyDoneKeys.length > 0) {
+    output += `\n${colors.bright}${colors.blue}ESSENTIALLY DONE ISSUES (Not requiring points):${colors.reset}\n`;
+    output += `${colors.blue}===============================================${colors.reset}\n`;
+
+    essentiallyDoneKeys.forEach((status) => {
+      const issues = essentiallyDoneUnpointedByStatus[status];
+
+      output += `${colors.blue}${status}${colors.reset}: ${issues.length} issues\n`;
+
+      issues.forEach((issue) => {
+        const trimmedSummary =
+          issue.summary.length > 50 ? issue.summary.substring(0, 47) + '...' : issue.summary;
+        output += `  ${colors.dim}- ${issue.key}:${colors.reset} ${trimmedSummary} (${issue.assignee})\n`;
+      });
+
+      output += '\n';
+    });
+  }
+
+  // Calculate total points across all pointed issues
+  const totalPoints = Object.values(pointedByStatus)
+    .flat()
+    .reduce((sum, issue) => sum + (issue.points || 0), 0);
+
+  // Count issues that need grooming (excluding essentially done unpointed issues)
+  const unpointedNeedGroomingCount = Object.values(unpointedByStatus).flat().length;
+  const totalNeedGroomingCount = unpointedNeedGroomingCount + groomed;
 
   // Summary
-  output += `${colors.bright}${colors.white}Summary:${colors.reset}\n`;
-  output += `  ${colors.green}Groomed issues: ${groomed}${colors.reset}\n`;
-  output += `  ${colors.yellow}Ungroomed issues: ${total - groomed}${colors.reset}\n`;
-  output += `  ${colors.bright}Total issues: ${total}${colors.reset}\n`;
+  output += `\n${colors.bright}${colors.white}SUMMARY:${colors.reset}\n`;
+  output += `${colors.white}==========${colors.reset}\n`;
+  output += `  ${colors.green}GROOMED issues (with points): ${groomed} (${totalPoints} points)${colors.reset}\n`;
+  output += `  ${colors.yellow}UNGROOMED issues (need points): ${unpointedNeedGroomingCount}${colors.reset}\n`;
 
-  // Risk score with attention arrows
-  output += `  ${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Risk Score:${colors.reset} ${riskColor}${riskScore} (${riskLevel} Risk)${colors.reset} = 1 - ([${colors.green}${groomed} groomed${colors.reset}] / [${colors.bright}${total} total${colors.reset} to groom])\n`;
+  // Only show essentially done count if there are any
+  if (essentiallyDoneKeys.length > 0) {
+    const essentiallyDoneCount = Object.values(essentiallyDoneUnpointedByStatus).flat().length;
+    output += `  ${colors.blue}ESSENTIALLY DONE issues (no points needed): ${essentiallyDoneCount}${colors.reset}\n`;
+  }
 
-  // Status categories
-  output += `\n${colors.bright}${colors.white}Status Categories:${colors.reset}\n`;
-  output += `  ${colors.green}GROOMED statuses: ${groomedStatuses.join(', ')}${colors.reset}\n`;
-  output += `  ${colors.yellow}UNGROOMED statuses: ${ungroomedStatuses.join(', ')}${colors.reset}\n`;
+  output += `  ${colors.bright}Total active issues: ${total}${colors.reset}\n`;
+
+  // Adjust risk score to only consider issues that need grooming
+  const adjustedRiskScore =
+    totalNeedGroomingCount > 0 ? parseFloat((1 - groomed / totalNeedGroomingCount).toFixed(2)) : 0;
+
+  // Determine adjusted risk level
+  let adjustedRiskLevel = 'Low';
+  if (adjustedRiskScore > 0.66) {
+    adjustedRiskLevel = 'High';
+  } else if (adjustedRiskScore > 0.33) {
+    adjustedRiskLevel = 'Medium';
+  }
+
+  // Risk color based on level
+  let adjustedRiskColor;
+  if (adjustedRiskLevel === 'Low') {
+    adjustedRiskColor = colors.green;
+  } else if (adjustedRiskLevel === 'Medium') {
+    adjustedRiskColor = colors.yellow;
+  } else {
+    adjustedRiskColor = colors.red;
+  }
+
+  output += `  ${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Risk Score:${colors.reset} ${adjustedRiskColor}${adjustedRiskScore} (${adjustedRiskLevel} Risk)${colors.reset} = 1 - ([${colors.green}${groomed} groomed issues${colors.reset}] / [${colors.bright}${totalNeedGroomingCount} issues needing grooming${colors.reset}])\n`;
 
   return output;
 };
@@ -364,25 +600,18 @@ export const formatBoardsList = (boards: any[], defaultBoardId?: number): string
   return output;
 };
 
-// Format a digest report with just the key metrics
 export const formatDigestReport = (
   boardId: number,
-  progressData: {
-    sprintName: string;
-    driftScore: number;
-    currentRemainingPoints: number;
-    plannedRemainingPoints: number;
-    assigneeWorkload: Record<string, number>;
-    unassignedPoints: number;
-    completedPoints: number;
-    totalPoints: number;
-  } | null,
+  progressData: ProgressReportData | null,
   planningData: {
     sprintName: string;
     groomed: number;
     total: number;
     riskScore: number;
     riskLevel: string;
+    // Add these new properties
+    groomedIssues?: number;
+    totalNeedingGrooming?: number;
   } | null,
 ): string => {
   let output = '';
@@ -421,6 +650,27 @@ export const formatDigestReport = (
 
     // Burden balance
     output += `${colors.bright}Burden Balance:${colors.reset} ${workloadWithUnassigned}\n`;
+
+    // Add Risk Score for progress data
+    if (
+      progressData &&
+      progressData.groomedIssues !== undefined &&
+      progressData.totalNeedingGrooming !== undefined
+    ) {
+      let riskColor;
+      const riskScore = progressData.riskScore || 0;
+      const riskLevel = progressData.riskLevel || 'Low';
+
+      if (riskLevel === 'Low') {
+        riskColor = colors.green;
+      } else if (riskLevel === 'Medium') {
+        riskColor = colors.yellow;
+      } else {
+        riskColor = colors.red;
+      }
+
+      output += `${colors.bright}Risk Score:${colors.reset} ${riskColor}${riskScore.toFixed(2)} (${riskLevel} Risk)${colors.reset} = 1 - ([${colors.green}${progressData.groomedIssues} groomed issues${colors.reset}] / [${colors.bright}${progressData.totalNeedingGrooming} issues needing grooming${colors.reset}])\n`;
+    }
   }
 
   // Add planning digest
@@ -442,7 +692,7 @@ export const formatDigestReport = (
     }
 
     // Risk score
-    output += `${colors.bright}Risk Score:${colors.reset} ${riskColor}${planningData.riskScore} (${planningData.riskLevel} Risk)${colors.reset} = 1 - ([${colors.green}${planningData.groomed} groomed${colors.reset}] / [${colors.bright}${planningData.total} total${colors.reset} to groom])\n`;
+    output += `${colors.bright}Risk Score:${colors.reset} ${riskColor}${planningData.riskScore.toFixed(2)} (${planningData.riskLevel} Risk)${colors.reset} = 1 - ([${colors.green}${planningData.groomed} groomed${colors.reset}] / [${colors.bright}${planningData.total} total to groom${colors.reset}])\n`;
   }
 
   return output;

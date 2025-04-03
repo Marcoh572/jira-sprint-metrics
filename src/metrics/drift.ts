@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { handleJiraApiError } from '../api/errors';
 import { calculateBusinessDays } from '../utils/dates';
+import { getActualRemaining } from '../api/issues';
 
 // Helper function to add business days to a date (skipping weekends)
 export function addBusinessDays(date: Date, days: number): Date {
@@ -66,18 +67,11 @@ export const calculateDriftScore = async (
       return total + points;
     }, 0);
 
-    // Get current remaining points (actual remaining)
-    const currentRemainingQuery = encodeURIComponent(
-      `sprint = "${sprintData.name}" AND status != Done`,
-    );
-    const currentRemainingResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
-    );
+    // Get remaining work using getActualRemaining which filters out "essentially done" statuses
+    const actualRemainingData = await getActualRemaining(client, sprintData.name, boardConfig);
 
-    const currentRemainingPoints = currentRemainingResponse.data.issues.reduce((total, issue) => {
-      const points = issue.fields[storyPointsField] || 0;
-      return total + points;
-    }, 0);
+    // Use the filtered total points instead of calculating from raw data
+    const currentRemainingPoints = actualRemainingData.totalPoints;
 
     // Get completed issues
     const completedQuery = encodeURIComponent(`sprint = "${sprintData.name}" AND status = Done`);
@@ -89,6 +83,14 @@ export const calculateDriftScore = async (
       const points = issue.fields[storyPointsField] || 0;
       return total + points;
     }, 0);
+
+    // Get all current remaining issues for reporting purposes (we'll filter when calculating)
+    const currentRemainingQuery = encodeURIComponent(
+      `sprint = "${sprintData.name}" AND status != Done`,
+    );
+    const currentRemainingResponse = await client.get<JiraSearchResponse>(
+      `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
+    );
 
     // Collect detailed information for remaining issues
     const remainingIssues = currentRemainingResponse.data.issues.map((issue) => ({
@@ -128,12 +130,6 @@ export const calculateDriftScore = async (
       // Use adjusted date for calculation (assuming no additional work is done)
       currentDate.setTime(adjustedDate.getTime());
     }
-
-    // For debug purposes
-    // console.log('Sprint start date:', startDate.toISOString());
-    // console.log('Sprint end date:', endDate.toISOString());
-    // console.log('Current date before adjustment:', new Date().toISOString());
-    // console.log('Current date after adjustment:', currentDate.toISOString());
 
     // We don't want to cap currentDate to the end date anymore, to allow projections beyond sprint end
     // Let the elapsedBusinessDays calculation show the true projected value

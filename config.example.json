@@ -1,0 +1,103 @@
+{
+  "baseUrl": "https://your-company.atlassian.net",
+  "email": "your-email@example.com",
+  "apiToken": "your-jira-api-token",
+  "defaultBoard": 2,
+  "boards": [
+    {
+      "id": 2,
+      "name": "Example Sprint Board",
+      "defaultTeamVelocity": 80,
+      "customFields": {
+        "groomedStatus": [
+          "TO PLAN"
+        ],
+        "ungroomedStatus": [
+          "TO GROOM",
+          "TO REFINE"
+        ],
+        "storyPoints": "customfield_10016"
+      },
+      "essentiallyDoneStatuses": [
+        "Icebox",
+        "PASSED QA",
+        "Ready for Deployment",
+        "CLOSED"
+      ],
+      "statusOrder": [
+        "TO REFINE",
+        "TO GROOM", 
+        "TO PLAN",
+        "To Do",
+        "SPRINT COMMITTED",
+        "IN PROGRESS",
+        "BLOCKED",
+        "TO REVIEW",
+        "READY FOR QA",
+        "PASSED QA",
+        "Ready for Deployment",
+        "CLOSED",
+        "DONE"
+      ],
+      "sprints": {
+        "Example Sprint 1": {
+          "totalBusinessDays": 10,
+          "teamVelocity": 75,
+          "notes": "Reduced velocity due to one team member on vacation"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Another Board",
+      "defaultTeamVelocity": 60,
+      "customFields": {
+        "groomedStatus": [
+          "Ready for Dev"
+        ],
+        "ungroomedStatus": [
+          "Backlog",
+          "Need Requirements"
+        ],
+        "storyPoints": "customfield_10016"
+      },
+      "essentiallyDoneStatuses": [
+        "Test Passed",
+        "Staging",
+        "Ready for Release"
+      ],
+      "statusOrder": [
+        "Need Requirements",
+        "Backlog",
+        "Ready for Dev",
+        "In Development",
+        "In Review",
+        "Testing",
+        "Test Passed",
+        "Staging",
+        "Ready for Release",
+        "Released"
+      ]
+    }
+  ],
+  "reports": {
+    "weekly": {
+      "description": "Weekly team status report",
+      "progress": [
+        {
+          "boardId": 2,
+          "sprint": "Example Sprint 1"
+        }
+      ]
+    },
+    "planning": {
+      "description": "Planning session report",
+      "plan": [
+        {
+          "boardId": 2,
+          "sprint": "Example Sprint 2"
+        }
+      ]
+    }
+  }
+}

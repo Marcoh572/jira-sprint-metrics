@@ -1,86 +1,92 @@
 import { BoardConfig, GroomingMetricsResult, JiraClient, JiraSearchResponse } from '../types';
 import { handleJiraApiError } from '../api/errors';
 
-// Get grooming metrics based on issue statuses with detailed breakdown
+// Get grooming metrics based on whether issues have story points assigned
 export const getGroomingMetrics = async (
   client: JiraClient,
   sprintName: string,
   boardConfig: BoardConfig,
 ): Promise<GroomingMetricsResult> => {
   try {
-    // Configure status values from config with explicit type annotations
-    const groomedStatuses: string[] = boardConfig.customFields?.groomedStatus || [
-      'TO PLAN',
-      'TO COMMIT',
-    ];
-    const ungroomedStatuses: string[] = boardConfig.customFields?.ungroomedStatus || [
-      'TO GROOM',
-      'TO REFINE',
-    ];
+    // Use the predefined story points field from board config
+    const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
 
-    // Build JQL with proper status handling using 'IN' operator for better JQL syntax
-    const groomedStatusList = groomedStatuses.map((status) => `"${status}"`).join(', ');
-    const ungroomedStatusList = ungroomedStatuses.map((status) => `"${status}"`).join(', ');
-
-    // Query using the sprint name with proper JQL syntax to get all relevant issues
-    const totalJql = encodeURIComponent(
-      `sprint = "${sprintName}" AND status in (${ungroomedStatusList}, ${groomedStatusList})`,
+    // Query to get all issues in the sprint with point information
+    const jql = encodeURIComponent(`sprint = "${sprintName}"`);
+    const response = await client.get<JiraSearchResponse>(
+      `/rest/api/3/search?jql=${jql}&fields=summary,status,assignee,${storyPointsField}&maxResults=500`,
     );
-    const totalResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${totalJql}&fields=summary,status,assignee&maxResults=100`,
-    );
-
-    // Get groomed issues separately
-    const groomedJql = encodeURIComponent(
-      `sprint = "${sprintName}" AND status in (${groomedStatusList})`,
-    );
-    const groomedResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${groomedJql}&fields=summary,status,assignee&maxResults=100`,
-    );
-
-    // With proper typing, we can directly access these properties
-    const totalCount = totalResponse.data.total;
-    const groomedCount = groomedResponse.data.total;
 
     // Process all issues for detailed breakdown
-    const allIssues = totalResponse.data.issues.map((issue) => ({
-      key: issue.key,
-      summary: issue.fields.summary,
-      status: issue.fields.status.name,
-      assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
-      isGroomed: groomedStatuses.includes(issue.fields.status.name),
-    }));
-
-    // Create separate lists
-    const groomedIssues = allIssues.filter((issue) => issue.isGroomed);
-    const ungroomedIssues = allIssues.filter((issue) => !issue.isGroomed);
-
-    // Group by status for more detailed breakdown
     const issuesByStatus: Record<
       string,
-      Array<{ key: string; summary: string; assignee: string }>
+      Array<{ key: string; summary: string; assignee: string; points: number | null }>
     > = {};
 
-    allIssues.forEach((issue) => {
-      if (!issuesByStatus[issue.status]) {
-        issuesByStatus[issue.status] = [];
+    let pointedCount = 0;
+    let totalCount = response.data.issues.length;
+
+    // Process each issue
+    response.data.issues.forEach((issue) => {
+      const status = issue.fields.status.name;
+      const points = issue.fields[storyPointsField] || null;
+      const isPointed = points !== null && points !== undefined;
+      const assignee = issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned';
+
+      // Track pointed vs unpointed
+      if (isPointed) {
+        pointedCount++;
       }
 
-      issuesByStatus[issue.status].push({
+      // Initialize status array if needed
+      if (!issuesByStatus[status]) {
+        issuesByStatus[status] = [];
+      }
+
+      // Add issue to the status group
+      issuesByStatus[status].push({
         key: issue.key,
-        summary: issue.summary,
-        assignee: issue.assignee,
+        summary: issue.fields.summary,
+        assignee,
+        points,
       });
     });
 
+    // Create versions of issue lists filtered by pointed status for the result
+    const groomedIssues = response.data.issues
+      .filter(
+        (issue) =>
+          issue.fields[storyPointsField] !== null && issue.fields[storyPointsField] !== undefined,
+      )
+      .map((issue) => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+        isGroomed: true, // These are pointed issues
+      }));
+
+    const ungroomedIssues = response.data.issues
+      .filter(
+        (issue) =>
+          issue.fields[storyPointsField] === null || issue.fields[storyPointsField] === undefined,
+      )
+      .map((issue) => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+        isGroomed: false, // These are unpointed issues
+      }));
+
     return {
-      groomed: groomedCount,
+      groomed: pointedCount, // "groomed" is defined as having points assigned
       total: totalCount,
       groomedIssues,
       ungroomedIssues,
       issuesByStatus,
-      groomedStatuses,
-      ungroomedStatuses,
+      groomedStatuses: [], // Not used anymore
+      ungroomedStatuses: [], // Not used anymore
     };
   } catch (error: unknown) {
     handleJiraApiError(error, 'Failed to fetch grooming metrics');

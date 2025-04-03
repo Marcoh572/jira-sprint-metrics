@@ -5,6 +5,8 @@ import {
   JiraConfig,
   JiraSearchResponse,
   JiraSprintResponse,
+  ProgressReportData,
+  SprintScopeChanges,
 } from '../types';
 import { getActiveSprint, getNextSprint, getSprintByName } from '../api/sprints';
 import { getActualRemaining } from '../api/issues';
@@ -17,6 +19,7 @@ import {
   formatDigestReport,
 } from '../utils/formatting';
 import { calculateBusinessDays } from '../utils/dates';
+import { getSimplifiedSprintChanges, getSprintScopeChanges } from '../metrics/sprint-changes';
 
 export const setupReportCommand = (program: Command) => {
   program
@@ -169,7 +172,7 @@ async function getProgressData(
   boardConfig: BoardConfig,
   options: any,
   activeSprint: any,
-) {
+): Promise<ProgressReportData | null> {
   const boardId = boardConfig.id;
 
   // Determine which sprint to use for progress report
@@ -199,36 +202,56 @@ async function getProgressData(
     return null;
   }
 
+  // Calculate Risk Score for the current sprint
+  const { issuesByStatus } = await getGroomingMetrics(client, progressSprintName, boardConfig);
+  const allIssues = Object.entries(issuesByStatus).flatMap(([status, issues]) =>
+    issues.map((issue) => ({
+      ...issue,
+      status, // Add the status from the object key
+    })),
+  );
+  const riskScoreData = calculateRiskScore(allIssues, boardConfig.essentiallyDoneStatuses || []);
+
   // Get remaining work
   const actualRemainingData = await getActualRemaining(client, sprint.name, boardConfig);
 
-  // Parse time shift option (using renamed parameter)
+  // Parse time shift option
   const timeShift = options.timeShift;
 
-  // Calculate drift score with enhanced breakdown, including time shift if specified
+  // Calculate drift score including time shift if specified
+  const driftScoreData = await calculateDriftScore(client, sprint, boardConfig, { timeShift });
+
+  // Extract all needed values from drift score calculation
   const {
     initialTotalPoints,
     currentRemainingPoints,
     plannedRemainingPoints,
     driftScore,
-    remainingIssues,
-    completedIssues,
     completedPoints,
-    totalSprintBusinessDays,
     elapsedBusinessDays,
     dailyRate,
     expectedCompletedPoints,
-  } = await calculateDriftScore(client, sprint, boardConfig, { timeShift });
+  } = driftScoreData;
 
   return {
     sprintName: sprint.name,
     driftScore,
+    totalPoints: initialTotalPoints,
+    initialTotalPoints,
     currentRemainingPoints,
     plannedRemainingPoints,
+    actualRemaining: currentRemainingPoints,
     assigneeWorkload: actualRemainingData.assigneeWorkload,
     unassignedPoints: actualRemainingData.unassignedPoints,
     completedPoints,
-    totalPoints: initialTotalPoints,
+    elapsedBusinessDays,
+    dailyRate,
+    expectedCompletedPoints,
+    // Risk Score data from our new function
+    groomedIssues: riskScoreData.groomed,
+    totalNeedingGrooming: riskScoreData.totalNeedingGrooming,
+    riskScore: riskScoreData.riskScore,
+    riskLevel: riskScoreData.riskLevel,
   };
 }
 
@@ -252,12 +275,15 @@ async function generateProgressReport(
   // Get remaining work
   const actualRemainingData = await getActualRemaining(client, sprint.name, boardConfig);
 
-  // Get all issues for the report
+  // Use the values calculated by calculateDriftScore and returned by getProgressData
   const initialTotalPoints = progressData.totalPoints;
   const currentRemainingPoints = progressData.currentRemainingPoints;
   const plannedRemainingPoints = progressData.plannedRemainingPoints;
   const driftScore = progressData.driftScore;
   const completedPoints = progressData.completedPoints;
+  const elapsedBusinessDays = progressData.elapsedBusinessDays;
+  const dailyRate = progressData.dailyRate;
+  const expectedCompletedPoints = progressData.expectedCompletedPoints;
 
   // Since getProgressData doesn't return all the detailed data we need,
   // we need to fetch the remaining and completed issues separately
@@ -300,30 +326,22 @@ async function generateProgressReport(
   // Get sprint-specific configuration if available
   const sprintConfig = boardConfig.sprints?.[sprint.name];
 
-  // Calculate total and elapsed business days
+  // Calculate total business days
   const calculatedTotalBusinessDays = calculateBusinessDays(startDate, endDate);
   // Use sprint-specific total business days if provided
   const totalSprintBusinessDays = sprintConfig?.totalBusinessDays ?? calculatedTotalBusinessDays;
 
-  // Calculate elapsed business days
-  const currentDate = new Date();
-  const elapsedBusinessDays = calculateBusinessDays(startDate, currentDate);
+  // Get the time shift option
+  const timeShift = options.timeShift;
 
-  // Calculate daily rate
-  const teamVelocity = sprintConfig?.teamVelocity ?? boardConfig.defaultTeamVelocity;
-  let dailyRate;
-
-  if (teamVelocity) {
-    dailyRate = teamVelocity / totalSprintBusinessDays;
-  } else {
-    dailyRate = initialTotalPoints / totalSprintBusinessDays;
+  // Always get sprint scope changes
+  let scopeChanges: SprintScopeChanges | undefined;
+  try {
+    scopeChanges = await getSprintScopeChanges(client, sprint, boardConfig, initialTotalPoints);
+  } catch (error) {
+    console.error('Unable to fetch sprint scope changes:', error);
+    // Continue without scope changes if there's an error
   }
-
-  // Round to one decimal place
-  dailyRate = Math.round(dailyRate * 10) / 10;
-
-  // Calculate expected completed points
-  const expectedCompletedPoints = Math.round(elapsedBusinessDays * dailyRate * 10) / 10;
 
   // Format and display the report
   const report = formatProgressReport(
@@ -339,17 +357,21 @@ async function generateProgressReport(
     completedIssues,
     completedPoints,
     totalSprintBusinessDays,
-    elapsedBusinessDays,
+    elapsedBusinessDays, // Use the time-shifted value from progressData
     dailyRate,
-    expectedCompletedPoints,
+    expectedCompletedPoints, // Use the time-shifted value from progressData
     startDate,
     endDate,
-    currentDate,
-    options.timeShift,
+    new Date(), // Current date (before time shifting)
+    timeShift,
+    boardConfig,
+    scopeChanges,
   );
 
   console.log(report);
 }
+
+import { calculateRiskScore } from '../metrics/risk';
 
 // Helper function to get planning data for a report
 async function getPlanningData(
@@ -393,20 +415,22 @@ async function getPlanningData(
     return null;
   }
 
-  // Get grooming metrics
-  const { groomed, total, issuesByStatus, groomedStatuses, ungroomedStatuses } =
-    await getGroomingMetrics(client, planSprintName, boardConfig);
-
-  // Calculate risk score
-  const riskScore = total > 0 ? parseFloat((1 - groomed / total).toFixed(2)) : 0;
-
-  // Determine risk level
-  let riskLevel = 'Low';
-  if (riskScore > 0.66) {
-    riskLevel = 'High';
-  } else if (riskScore > 0.33) {
-    riskLevel = 'Medium';
-  }
+  // Get full grooming metrics (including issue details)
+  const { groomed, total, issuesByStatus } = await getGroomingMetrics(
+    client,
+    planSprintName,
+    boardConfig,
+  );
+  const allIssues = Object.entries(issuesByStatus).flatMap(([status, issues]) =>
+    issues.map((issue) => ({
+      ...issue,
+      status, // Add the status from the object key
+    })),
+  );
+  const { riskScore, riskLevel, totalNeedingGrooming } = calculateRiskScore(
+    allIssues,
+    boardConfig.essentiallyDoneStatuses || [],
+  );
 
   return {
     sprintName: planSprintName,
@@ -414,6 +438,9 @@ async function getPlanningData(
     total,
     riskScore,
     riskLevel,
+    // New properties for digest report
+    groomedIssues: groomed, // Number of pointed issues
+    totalNeedingGrooming, // Total issues needing grooming (from the new calculation)
   };
 }
 
@@ -456,6 +483,7 @@ async function generatePlanningReport(
     issuesByStatus,
     groomedStatuses,
     ungroomedStatuses,
+    boardConfig, // Pass boardConfig to access statusOrder
   );
 
   console.log(report);

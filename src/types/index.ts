@@ -16,20 +16,25 @@ export type SprintConfig = {
 };
 
 // Board config type
-export type BoardConfig = {
-  id: number; // Board ID
-  name?: string; // Optional board name for better reporting
-  defaultTeamVelocity?: number; // Default team velocity for burndown calculation
+export interface BoardConfig {
+  id: number;
+  name: string;
+  defaultTeamVelocity: number;
   customFields?: {
-    groomedStatus?: string[]; // Status values that indicate an item is groomed
-    ungroomedStatus?: string[]; // Status values that indicate an item is not yet groomed
-    storyPoints?: string; // Field name for story points
+    groomedStatus: string[];
+    ungroomedStatus: string[];
+    storyPoints: string;
   };
-  // Sprint-specific configurations
+  essentiallyDoneStatuses?: string[]; // Statuses that should NOT be counted as remaining work
+  statusOrder?: string[]; // Ordered list of statuses for display
   sprints?: {
-    [sprintName: string]: SprintConfig;
+    [sprintName: string]: {
+      totalBusinessDays?: number;
+      teamVelocity?: number;
+      notes?: string;
+    };
   };
-};
+}
 
 // Data source for a report
 export type ReportDataSource = {
@@ -65,16 +70,26 @@ export type SprintData = {
 };
 
 export type ProgressReportData = {
-  name: string;
+  sprintName: string;
   driftScore: number;
-  initialTotalPoints: number;
+  totalPoints: number;
   currentRemainingPoints: number;
   plannedRemainingPoints: number;
   actualRemaining: number;
   assigneeWorkload: Record<string, number>;
   unassignedPoints: number;
+  completedPoints: number;
+  elapsedBusinessDays: number;
+  dailyRate: number;
+  expectedCompletedPoints: number;
+  // Add initialTotalPoints to the type
+  initialTotalPoints: number;
+  // New optional properties for risk score
+  groomedIssues?: number;
+  totalNeedingGrooming?: number;
+  riskScore?: number;
+  riskLevel?: 'Low' | 'Medium' | 'High';
 };
-
 export type PlanReportData = {
   name: string;
   riskScore: number;
@@ -146,8 +161,76 @@ export type DriftScoreResult = {
   expectedCompletedPoints: number;
 };
 
-export type ActualRemainingResult = {
+export interface ActualRemainingResult {
   totalPoints: number;
   assigneeWorkload: Record<string, number>;
   unassignedPoints: number;
-};
+  issuesByStatus?: Record<
+    string,
+    {
+      points: number;
+      issues: Array<{
+        key: string;
+        summary: string;
+        points: number;
+        assignee: string;
+        status: string;
+      }>;
+    }
+  >;
+}
+
+export interface SprintScopeChanges {
+  initialPoints: number;
+  currentPoints: number;
+  netPointChange: number;
+  currentIssueCount: number;
+
+  addedIssueCount: number;
+  addedIssues: Array<{
+    key: string;
+    summary: string;
+    points: number;
+    status: string;
+    assignee: string;
+  }>;
+  addedPoints: number;
+  addedByAssignee: Record<
+    string,
+    {
+      count: number;
+      points: number;
+      issues: Array<{
+        key: string;
+        summary: string;
+        points: number;
+        status: string;
+        assignee: string;
+      }>;
+    }
+  >;
+
+  removedIssueCount: number;
+  removedIssues: Array<{
+    key: string;
+    summary: string;
+    points: number;
+    status: string;
+    assignee: string;
+  }>;
+  removedPoints: number;
+  removedByAssignee: Record<
+    string,
+    {
+      count: number;
+      points: number;
+      issues: Array<{
+        key: string;
+        summary: string;
+        points: number;
+        status: string;
+        assignee: string;
+      }>;
+    }
+  >;
+}
