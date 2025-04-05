@@ -20,6 +20,7 @@ import {
 } from '../utils/formatting';
 import { calculateBusinessDays } from '../utils/dates';
 import { getSimplifiedSprintChanges, getSprintScopeChanges } from '../metrics/sprint-changes';
+import { calculateRiskScore } from '../metrics/risk';
 
 export const setupReportCommand = (program: Command) => {
   program
@@ -210,7 +211,7 @@ async function getProgressData(
       status, // Add the status from the object key
     })),
   );
-  const riskScoreData = calculateRiskScore(allIssues, boardConfig.essentiallyDoneStatuses || []);
+  const riskScoreData = calculateRiskScore(allIssues, boardConfig.finishLineStatuses || []);
 
   // Get remaining work
   const actualRemainingData = await getActualRemaining(client, sprint.name, boardConfig);
@@ -226,11 +227,14 @@ async function getProgressData(
     initialTotalPoints,
     currentRemainingPoints,
     plannedRemainingPoints,
+    rawCalculatedRemaining,
     driftScore,
     completedPoints,
     elapsedBusinessDays,
     dailyRate,
     expectedCompletedPoints,
+    teamVelocity,
+    sprintLoadInfo,
   } = driftScoreData;
 
   return {
@@ -240,6 +244,7 @@ async function getProgressData(
     initialTotalPoints,
     currentRemainingPoints,
     plannedRemainingPoints,
+    rawCalculatedRemaining, // New field
     actualRemaining: currentRemainingPoints,
     assigneeWorkload: actualRemainingData.assigneeWorkload,
     unassignedPoints: actualRemainingData.unassignedPoints,
@@ -247,6 +252,8 @@ async function getProgressData(
     elapsedBusinessDays,
     dailyRate,
     expectedCompletedPoints,
+    teamVelocity, // New field
+    sprintLoadInfo, // New field
     // Risk Score data from our new function
     groomedIssues: riskScoreData.groomed,
     totalNeedingGrooming: riskScoreData.totalNeedingGrooming,
@@ -281,6 +288,7 @@ async function generateProgressReport(
   const plannedRemainingPoints = progressData.plannedRemainingPoints;
   const driftScore = progressData.driftScore;
   const completedPoints = progressData.completedPoints;
+  console.log(' > completedPoints:', completedPoints);
   const elapsedBusinessDays = progressData.elapsedBusinessDays;
   const dailyRate = progressData.dailyRate;
   const expectedCompletedPoints = progressData.expectedCompletedPoints;
@@ -343,6 +351,11 @@ async function generateProgressReport(
     // Continue without scope changes if there's an error
   }
 
+  // Get the raw calculated remaining value and sprint load info from the progress data
+  const rawCalculatedRemaining = progressData.rawCalculatedRemaining;
+  const teamVelocity = progressData.teamVelocity;
+  const sprintLoadInfo = progressData.sprintLoadInfo;
+
   // Format and display the report
   const report = formatProgressReport(
     boardId,
@@ -366,12 +379,13 @@ async function generateProgressReport(
     timeShift,
     boardConfig,
     scopeChanges,
+    rawCalculatedRemaining, // Pass the raw calculated value
+    teamVelocity, // Pass the team velocity
+    sprintLoadInfo, // Pass the sprint load info
   );
 
   console.log(report);
 }
-
-import { calculateRiskScore } from '../metrics/risk';
 
 // Helper function to get planning data for a report
 async function getPlanningData(
@@ -429,7 +443,7 @@ async function getPlanningData(
   );
   const { riskScore, riskLevel, totalNeedingGrooming } = calculateRiskScore(
     allIssues,
-    boardConfig.essentiallyDoneStatuses || [],
+    boardConfig.finishLineStatuses || [],
   );
 
   return {

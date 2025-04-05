@@ -8,7 +8,7 @@ export const calculateRiskScore = (
     points?: number | null;
     status: string; 
   }>,
-  essentiallyDoneStatuses: string[] = []
+  finishLineStatuses: string[] = []
 ): {
   riskScore: number;
   riskLevel: 'Low' | 'Medium' | 'High';
@@ -23,7 +23,7 @@ export const calculateRiskScore = (
   // Filter out "essentially done" issues from unpointed issues
   const unpointedNeedGrooming = allIssues.filter(issue => 
     (issue.points === null || issue.points === undefined) && 
-    !essentiallyDoneStatuses.includes(issue.status)
+    !finishLineStatuses.includes(issue.status)
   );
   
   // Calculate counts

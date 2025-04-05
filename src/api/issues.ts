@@ -20,7 +20,7 @@ export const getActualRemaining = async (
     let unassignedPoints = 0;
 
     // Get the list of essentially done statuses (if configured)
-    const essentiallyDoneStatuses = boardConfig.essentiallyDoneStatuses || [];
+    const essentiallyDoneStatuses = boardConfig.finishLineStatuses || [];
 
     // Track issues by status for detailed reporting
     const issuesByStatus: Record<string, { points: number; issues: any[] }> = {};

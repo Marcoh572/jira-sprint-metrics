@@ -2,7 +2,6 @@ import { BoardConfig, ProgressReportData, SprintData, SprintScopeChanges } from 
 import { colors } from './colors';
 import { formatBusinessDaysBreakdown } from './dates';
 
-// Updated formatProgressReport function with status ordering
 export const formatProgressReport = (
   boardId: number,
   sprintName: string,
@@ -36,10 +35,39 @@ export const formatProgressReport = (
   currentDate: Date,
   timeShift?: number,
   boardConfig?: any,
-  scopeChanges?: SprintScopeChanges, // Use the SprintScopeChanges interface
+  scopeChanges?: SprintScopeChanges,
+  rawCalculatedRemaining?: number,
+  teamVelocity?: number,
+  sprintLoadInfo?: {
+    type: 'light' | 'heavy' | 'normal';
+    loadPercentage: number;
+    expectedCompletionDay?: string;
+    overcommitPoints?: number;
+  } | null,
 ): string => {
-  // Get the essentially done statuses
-  const essentiallyDoneStatuses = boardConfig?.essentiallyDoneStatuses || [];
+  // Add this function definition near the top of the function, before use
+  const sortStatusKeys = (statuses: string[]): string[] => {
+    if (statusOrder.length > 0) {
+      // Sort according to the defined order (and then alphabetically for any not in the order)
+      return [...statuses].sort((a, b) => {
+        const indexA = statusOrder.indexOf(a);
+        const indexB = statusOrder.indexOf(b);
+
+        if (indexA !== -1 && indexB !== -1) {
+          return indexA - indexB;
+        } else if (indexA !== -1) {
+          return -1;
+        } else if (indexB !== -1) {
+          return 1;
+        } else {
+          return a.localeCompare(b);
+        }
+      });
+    }
+    return statuses.sort();
+  };
+  // Renamed from essentiallyDoneStatuses
+  const finishLineStatuses = boardConfig?.finishLineStatuses || [];
 
   // Get the status order if specified
   const statusOrder = boardConfig?.statusOrder || [];
@@ -59,15 +87,18 @@ export const formatProgressReport = (
       ? `${formattedWorkload}, ${colors.yellow}Uncarried ${colors.bright}${unassignedPoints}${colors.reset}`
       : `${colors.yellow}Uncarried ${colors.bright}${unassignedPoints}${colors.reset}`;
 
-  // Determine drift score color based on its value
+  // Drift score color determination
   let driftColor;
   if (Math.abs(driftScore) <= 5) {
-    driftColor = colors.green; // Good - close to ideal
+    driftColor = colors.green; // Minor deviation
   } else if (Math.abs(driftScore) <= 15) {
-    driftColor = colors.yellow; // Warning - moderate drift
+    driftColor = colors.yellow; // Moderate deviation
   } else {
-    driftColor = colors.red; // Bad - significant drift
+    driftColor = colors.red; // Significant deviation
   }
+
+  // Calculate the total work that's counted in drift calculations
+  const totalDriftWork = currentRemainingPoints + completedPoints;
 
   // Build the output
   let output = '';
@@ -75,18 +106,57 @@ export const formatProgressReport = (
   // Header
   output += `\n${colors.bright}${colors.cyan}=== Progress: Board ${boardId} "${sprintName}" ===${colors.reset}\n`;
 
+  // Sprint Overview section (new)
+  if (teamVelocity) {
+    // Filter out issues in finish line statuses
+    const activeRemainingPoints = currentRemainingPoints;
+
+    // Calculate Sprint Load using only active work
+    const loadPercentage = Math.round((activeRemainingPoints / teamVelocity) * 100);
+    // Calculate overcommitted points only for active work
+    const overcommittedPoints =
+      activeRemainingPoints > teamVelocity ? activeRemainingPoints - teamVelocity : 0;
+
+    // Output Sprint Overview
+    output += `\n${colors.bright}${colors.white}Sprint Overview:${colors.reset}\n`;
+    output += `  ${colors.dim}Team Velocity:${colors.reset} ${colors.bright}${teamVelocity}${colors.reset} points per sprint (${dailyRate.toFixed(1)} points/day)\n`;
+
+    if (sprintLoadInfo) {
+      // Use drift-counted points for Sprint Load, but only active work
+      const loadColor = loadPercentage > 100 ? colors.red : colors.green;
+      output += `  ${colors.dim}Sprint Load:${colors.reset} ${colors.bright}${activeRemainingPoints}${colors.reset} drift-counted points (${loadColor}${loadPercentage}% of capacity${colors.reset})\n`;
+
+      // Show overcommitted points if applicable, using only active work
+      if (loadPercentage > 100) {
+        output += `  ${colors.dim}Overcommitted By:${colors.reset} ${colors.red}${overcommittedPoints}${colors.reset} points beyond team capacity\n`;
+      } else if (sprintLoadInfo?.type === 'light' && sprintLoadInfo.expectedCompletionDay) {
+        output += `  ${colors.dim}Expected Completion:${colors.reset} Day ${colors.green}${sprintLoadInfo.expectedCompletionDay}${colors.reset} of ${totalSprintBusinessDays} at full velocity\n`;
+      }
+    }
+
+    // Current status with drift-counted points
+    const percentComplete = Math.round((completedPoints / totalDriftWork) * 100);
+    output += `  ${colors.dim}Current Status:${colors.reset} ${colors.bright}${completedPoints}/${totalDriftWork}${colors.reset} drift-counted points completed (${percentComplete}%)\n`;
+  }
+
   // Add breakdown of calculation
   output += `\n${colors.bright}${colors.white}Calculation Breakdown:${colors.reset}\n`;
 
   // Remaining actual calculation
   output += `${colors.bright}Remaining Actual (${colors.red}${currentRemainingPoints}${colors.reset}):${colors.reset}\n`;
 
-  // Group by status for better organization
+  // Group by status for better organization, EXCLUDING finish line statuses
   const remainingByStatus: Record<
     string,
     Array<{ key: string; summary: string; points: number; assignee: string }>
   > = {};
-  remainingIssues.forEach((issue) => {
+
+  // Filter out finish line statuses from remaining issues
+  const activeRemainingIssues = remainingIssues.filter(
+    (issue) => !finishLineStatuses.includes(issue.status),
+  );
+
+  activeRemainingIssues.forEach((issue) => {
     if (!remainingByStatus[issue.status]) {
       remainingByStatus[issue.status] = [];
     }
@@ -125,18 +195,11 @@ export const formatProgressReport = (
   }
 
   // Show remaining issues by status in the specified order
-  // Show remaining issues by status in the specified order
   sortedStatusKeys.forEach((status) => {
     const issues = remainingByStatus[status];
     const totalStatusPoints = issues.reduce((sum, issue) => sum + issue.points, 0);
 
-    // Add indicator if status is considered "essentially done"
-    const isEssentiallyDone = essentiallyDoneStatuses.includes(status);
-    const statusIndicator = isEssentiallyDone
-      ? ` ${colors.yellow}[NOT COUNTED IN DRIFT]${colors.reset}`
-      : '';
-
-    output += `  ${colors.dim}${status}:${colors.reset} ${colors.bright}${totalStatusPoints} points${colors.reset} (${issues.length} issues)${statusIndicator}\n`;
+    output += `  ${colors.dim}${status}:${colors.reset} ${colors.bright}${totalStatusPoints} points${colors.reset} (${issues.length} issues)\n`;
 
     // Only show detailed issue list if there are 10 or fewer issues or if they're high point issues
     const showDetailed = issues.length <= 10 || totalStatusPoints > 20;
@@ -146,13 +209,133 @@ export const formatProgressReport = (
 
       // Show all issues, even those with 0 points
       sortedIssues.forEach((issue) => {
-        // Display all issues, including those with 0 points
         const trimmedSummary =
           issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
         output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.red}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
       });
     }
   });
+
+  // 🏁 FINISH LINE: Visual delimiter between race track and completed work
+  output += `\n${colors.bright}${colors.green}────────────── 🏁 ISSUES PAST THE FINISH LINE 🏁 ──────────────${colors.reset}\n`;
+
+  // Combine completed issues from both sources
+  const finishLineCompletedIssues = [
+    ...completedIssues, // Explicitly completed issues
+    ...remainingIssues.filter((issue) => finishLineStatuses.includes(issue.status)), // Issues in finish line statuses
+  ];
+
+  // Remove any potential duplicates by creating a map keyed by issue key
+  const uniqueCompletedIssuesMap = new Map();
+  finishLineCompletedIssues.forEach((issue) => {
+    // If this issue isn't already in the map, or if the new issue has points and the existing one doesn't
+    if (
+      !uniqueCompletedIssuesMap.has(issue.key) ||
+      (issue.points > 0 && uniqueCompletedIssuesMap.get(issue.key).points === 0)
+    ) {
+      uniqueCompletedIssuesMap.set(issue.key, issue);
+    }
+  });
+
+  // Convert back to an array
+  const uniqueCompletedIssues = Array.from(uniqueCompletedIssuesMap.values());
+
+  // Group completed issues by status
+  const completedByStatus: Record<
+    string,
+    Array<{ key: string; summary: string; points: number; assignee: string }>
+  > = {};
+
+  uniqueCompletedIssues.forEach((issue) => {
+    if (!completedByStatus[issue.status]) {
+      completedByStatus[issue.status] = [];
+    }
+    completedByStatus[issue.status].push({
+      key: issue.key,
+      summary: issue.summary,
+      points: issue.points,
+      assignee: issue.assignee,
+    });
+  });
+
+  // Calculate total points of completed issues
+  const totalCompletedPoints = uniqueCompletedIssues.reduce((sum, issue) => sum + issue.points, 0);
+
+  // Display Completed Issues section
+  output += `\n${colors.bright}Completed Issues (${colors.green}${totalCompletedPoints}${colors.reset} points):${colors.reset}\n`;
+
+  // Use same sorting logic as remaining issues
+  const completedStatusKeys = sortStatusKeys(Object.keys(completedByStatus));
+
+  completedStatusKeys.forEach((status: string) => {
+    const issues = completedByStatus[status];
+    const totalStatusPoints = issues.reduce((sum, issue) => sum + issue.points, 0);
+
+    output += `  ${colors.dim}${status}:${colors.reset} ${colors.bright}${totalStatusPoints} points${colors.reset} (${issues.length} issues)\n`;
+
+    // Sort and show detailed issues
+    const sortedIssues = [...issues].sort((a, b) => b.points - a.points);
+    sortedIssues.forEach((issue) => {
+      const trimmedSummary =
+        issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
+      output += `    ${colors.dim}- ${issue.key}${colors.reset} [${colors.green}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
+    });
+  });
+
+  // NEW: INSERT SPRINT TIMELINE SECTION IMMEDIATELY AFTER COMPLETED ISSUES
+  // Reuse the existing Sprint Timeline calculation and display logic
+  output += `\n${colors.bright}${colors.white}Sprint Timeline:${colors.reset}\n`;
+
+  // Use the total initial sprint points as the denominator
+  const totalSprintPoints = initialTotalPoints;
+
+  // Calculate percentages using total sprint points
+  const workCompletionPercent =
+    totalSprintPoints > 0
+      ? Math.min(100, Math.round((totalCompletedPoints / totalSprintPoints) * 100))
+      : 0;
+
+  const expectedCompletionPercent =
+    elapsedBusinessDays === totalSprintBusinessDays
+      ? 100
+      : Math.round((expectedCompletedPoints / initialTotalPoints) * 100);
+
+  // Calculate the bars
+  const timelineWidth = 40;
+  const workCompletedBar = '='
+    .repeat(Math.round((workCompletionPercent / 100) * timelineWidth))
+    .padEnd(timelineWidth);
+    const expectedProgressBar = '='
+    .repeat(Math.round((expectedCompletionPercent / 100) * timelineWidth))
+    .padEnd(timelineWidth);
+  
+  
+  // Status line and interpretation logic
+  const aheadOrBehind = driftScore > 0 ? 'behind' : driftScore < 0 ? 'ahead' : 'on track';
+  const differenceAmount = Math.abs(driftScore).toFixed(1);
+  const statusColor = driftScore > 0 ? colors.red : driftScore < 0 ? colors.green : colors.blue;
+
+  // Display the timeline
+  output += `  Completed:    [${statusColor}${workCompletedBar}${colors.reset}] ${workCompletionPercent}% (${totalCompletedPoints} of ${totalSprintPoints} total points)\n`;
+  output += `  Expected:     [${colors.yellow}${expectedProgressBar}${colors.reset}] ${expectedCompletionPercent}% (${Math.min(expectedCompletedPoints, initialTotalPoints)} of ${initialTotalPoints} total points)\n`;
+
+  // Status line using pre-calculated drift score
+  output += `  Status: Team is ${statusColor}${differenceAmount} points ${aheadOrBehind}${colors.reset} expected pace (Day ${elapsedBusinessDays} of ${totalSprintBusinessDays})\n`;
+
+  // NEW: INSERT DRIFT SCORE SECTION IMMEDIATELY AFTER SPRINT TIMELINE
+  // Drift Score section
+  output += `\n${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Drift Score${colors.reset}${colors.reset} (Less is best): ${driftColor}${driftScore}${colors.reset} = [${colors.yellow}${expectedCompletedPoints} expected completed${colors.reset}] - [${colors.blue}${totalCompletedPoints} actual completed${colors.reset}]\n`;
+
+  // Drift score interpretation
+  let driftExplanation = '';
+  if (driftScore > 0) {
+    driftExplanation = `The team is ${Math.abs(driftScore)} points behind the expected progress for this point in the sprint.`;
+  } else if (driftScore < 0) {
+    driftExplanation = `The team is ${Math.abs(driftScore)} points ahead of the expected progress for this point in the sprint.`;
+  } else {
+    driftExplanation = 'The team is exactly on track with expected progress.';
+  }
+  output += `  ${colors.dim}Interpretation:${colors.reset} ${driftColor}${driftExplanation}${colors.reset}\n`;
 
   // Remaining planned calculation
   output += `\n${colors.bright}Remaining Planned (${colors.green}${plannedRemainingPoints}${colors.reset}):${colors.reset}\n`;
@@ -175,8 +358,18 @@ export const formatProgressReport = (
   output += `  ${colors.dim}Expected Burn Rate:${colors.reset} ${colors.bright}${dailyRate}${colors.reset} points per day\n`;
   output += `  ${colors.dim}Expected Completed:${colors.reset} ${colors.bright}${expectedCompletedPoints}${colors.reset} points by now\n`;
 
-  // Make sure the math shown matches the real calculation
-  output += `  ${colors.dim}Expected Remaining:${colors.reset} ${initialTotalPoints} - ${expectedCompletedPoints} = ${colors.green}${plannedRemainingPoints}${colors.reset} points\n`;
+  // IMPROVED: Make the expected remaining calculation clearer, especially for light sprint loads
+  if (rawCalculatedRemaining !== undefined && rawCalculatedRemaining < 0) {
+    // When calculation would result in a negative value - handle light sprint loads better
+    output += `  ${colors.dim}Expected Remaining:${colors.reset} ${initialTotalPoints} - ${expectedCompletedPoints} = ${colors.green}0${colors.reset} points\n`;
+
+    if (sprintLoadInfo?.type === 'light' && sprintLoadInfo.expectedCompletionDay) {
+      output += `  ${colors.dim}Note:${colors.reset} ${colors.yellow}Based on team velocity, all sprint work should be completed by day ${sprintLoadInfo.expectedCompletionDay} of ${totalSprintBusinessDays}.${colors.reset}\n`;
+    }
+  } else {
+    // Normal case
+    output += `  ${colors.dim}Expected Remaining:${colors.reset} ${initialTotalPoints} - ${expectedCompletedPoints} = ${colors.green}${plannedRemainingPoints}${colors.reset} points\n`;
+  }
 
   // Add Sprint Scope Changes section if available
   if (scopeChanges) {
@@ -255,23 +448,30 @@ export const formatProgressReport = (
     }
   }
 
-  // Done issues
-  if (completedIssues.length > 0) {
-    output += `\n${colors.bright}Completed Issues (${colors.green}${completedPoints}${colors.reset} points):${colors.reset}\n`;
+  // Sprint Timeline section
+  output += `\n${colors.bright}${colors.white}Sprint Timeline:${colors.reset}\n`;
 
-    // Sort by points (highest first)
-    const sortedCompletedIssues = [...completedIssues].sort((a, b) => b.points - a.points);
+  // Calculate total essentially done points
+  const essentiallyDonePoints = remainingIssues
+    .filter((issue) => finishLineStatuses.includes(issue.status))
+    .reduce((sum, issue) => sum + issue.points, 0);
 
-    // Show top completed issues with points
-    sortedCompletedIssues.forEach((issue) => {
-      const trimmedSummary =
-        issue.summary.length > 40 ? issue.summary.substring(0, 37) + '...' : issue.summary;
-      output += `  ${colors.dim}- ${issue.key}${colors.reset} [${colors.green}${issue.points}${colors.reset}]: ${trimmedSummary} ${colors.blue}(${issue.assignee})${colors.reset}\n`;
-    });
+  // // Calculate total completed points
+  // const totalCompletedPoints =
+  //   completedPoints +
+  //   remainingIssues
+  //     .filter((issue) => finishLineStatuses.includes(issue.status))
+  //     .reduce((sum, issue) => sum + issue.points, 0);
+
+  // ENHANCED: Special case message for light sprints that are behind
+  if (
+    plannedRemainingPoints === 0 &&
+    currentRemainingPoints > 0 &&
+    sprintLoadInfo?.type === 'light'
+  ) {
+    output += `\n${colors.bright}${colors.yellow}⚠ Light Sprint Warning: ${colors.reset}${colors.yellow}This sprint contains only ${sprintLoadInfo.loadPercentage}% of the team's capacity.${colors.reset}\n`;
+    output += `  ${colors.yellow}Based on team velocity, all work should be completed by day ${sprintLoadInfo.expectedCompletionDay}, but ${currentRemainingPoints} points remain.${colors.reset}\n`;
   }
-
-  // Drift score
-  output += `\n${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Drift Score${colors.reset}${colors.reset} (Ideal is zero): ${driftColor}${driftScore}${colors.reset} = [${colors.red}${currentRemainingPoints} remaining actual${colors.reset}] - [${colors.green}${plannedRemainingPoints} remaining planned${colors.reset}]\n`;
 
   // Sprint details
   output += `\n${colors.bright}${colors.white}Sprint Details:${colors.reset}\n`;
@@ -309,7 +509,7 @@ export const formatPlanningReport = (
   // Get the status order if specified
   const statusOrder = boardConfig?.statusOrder || [];
   // Get essentially done statuses
-  const essentiallyDoneStatuses = boardConfig?.essentiallyDoneStatuses || [];
+  const finishLineStatuses = boardConfig?.finishLineStatuses || [];
 
   // Risk details are now passed in from the calculated risk score
   const riskScore = total > 0 ? parseFloat((1 - groomed / total).toFixed(2)) : 0;
@@ -341,7 +541,7 @@ export const formatPlanningReport = (
   // Organize issues by pointed status and workflow status
   const pointedByStatus: Record<string, any[]> = {};
   const unpointedByStatus: Record<string, any[]> = {};
-  const essentiallyDoneUnpointedByStatus: Record<string, any[]> = {};
+  const finishLineUnpointedByStatus: Record<string, any[]> = {};
 
   // Populate the status groups
   Object.keys(issuesByStatus).forEach((status) => {
@@ -360,9 +560,9 @@ export const formatPlanningReport = (
     }
 
     if (unpointed.length > 0) {
-      // If status is "essentially done", put in separate category
-      if (essentiallyDoneStatuses.includes(status)) {
-        essentiallyDoneUnpointedByStatus[status] = unpointed;
+      // If status is a "finish line" status, put in a separate category
+      if (finishLineStatuses.includes(status)) {
+        finishLineUnpointedByStatus[status] = unpointed;
       } else {
         unpointedByStatus[status] = unpointed;
       }
@@ -441,14 +641,13 @@ export const formatPlanningReport = (
   }
 
   // Unpointed essentially done issues section (No need to groom these)
-  const essentiallyDoneKeys = sortStatusKeys(Object.keys(essentiallyDoneUnpointedByStatus));
-
-  if (essentiallyDoneKeys.length > 0) {
+  const finishLineKeys = sortStatusKeys(Object.keys(finishLineUnpointedByStatus));
+  if (finishLineKeys.length > 0) {
     output += `\n${colors.bright}${colors.blue}ESSENTIALLY DONE ISSUES (Not requiring points):${colors.reset}\n`;
     output += `${colors.blue}===============================================${colors.reset}\n`;
 
-    essentiallyDoneKeys.forEach((status) => {
-      const issues = essentiallyDoneUnpointedByStatus[status];
+    finishLineKeys.forEach((status) => {
+      const issues = finishLineUnpointedByStatus[status];
 
       output += `${colors.blue}${status}${colors.reset}: ${issues.length} issues\n`;
 
@@ -478,8 +677,8 @@ export const formatPlanningReport = (
   output += `  ${colors.yellow}UNGROOMED issues (need points): ${unpointedNeedGroomingCount}${colors.reset}\n`;
 
   // Only show essentially done count if there are any
-  if (essentiallyDoneKeys.length > 0) {
-    const essentiallyDoneCount = Object.values(essentiallyDoneUnpointedByStatus).flat().length;
+  if (finishLineKeys.length > 0) {
+    const essentiallyDoneCount = Object.values(finishLineUnpointedByStatus).flat().length;
     output += `  ${colors.blue}ESSENTIALLY DONE issues (no points needed): ${essentiallyDoneCount}${colors.reset}\n`;
   }
 
@@ -622,16 +821,18 @@ export const formatDigestReport = (
 
     // Determine drift score color based on its value
     let driftColor;
-    if (Math.abs(progressData.driftScore) <= 5) {
+    const driftScore = progressData.driftScore; // Make sure we get it from progressData
+
+    if (Math.abs(driftScore) <= 5) {
       driftColor = colors.green; // Good - close to ideal
-    } else if (Math.abs(progressData.driftScore) <= 15) {
+    } else if (Math.abs(driftScore) <= 15) {
       driftColor = colors.yellow; // Warning - moderate drift
     } else {
       driftColor = colors.red; // Bad - significant drift
     }
 
     // Drift score
-    output += `${colors.bright}Drift Score${colors.reset} (Ideal is zero): ${driftColor}${progressData.driftScore}${colors.reset} = [${colors.red}${progressData.currentRemainingPoints} remaining actual${colors.reset}] - [${colors.green}${progressData.plannedRemainingPoints} remaining planned${colors.reset}]\n`;
+    output += `\n${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Drift Score${colors.reset}${colors.reset} (Less is best): ${driftColor}${driftScore}${colors.reset} = [${colors.yellow}${progressData.expectedCompletedPoints} expected completed${colors.reset}] - [${colors.blue}${progressData.completedPoints} actual completed${colors.reset}]\n`;
 
     // Format assignee workload
     const assigneeWorkloadEntries = Object.entries(progressData.assigneeWorkload);

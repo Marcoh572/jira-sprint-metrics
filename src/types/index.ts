@@ -25,8 +25,9 @@ export interface BoardConfig {
     ungroomedStatus: string[];
     storyPoints: string;
   };
-  essentiallyDoneStatuses?: string[]; // Statuses that should NOT be counted as remaining work
-  statusOrder?: string[]; // Ordered list of statuses for display
+  // Renamed from essentiallyDoneStatuses
+  finishLineStatuses?: string[];
+  statusOrder?: string[];
   sprints?: {
     [sprintName: string]: {
       totalBusinessDays?: number;
@@ -75,6 +76,7 @@ export type ProgressReportData = {
   totalPoints: number;
   currentRemainingPoints: number;
   plannedRemainingPoints: number;
+  rawCalculatedRemaining: number; // Added
   actualRemaining: number;
   assigneeWorkload: Record<string, number>;
   unassignedPoints: number;
@@ -82,14 +84,22 @@ export type ProgressReportData = {
   elapsedBusinessDays: number;
   dailyRate: number;
   expectedCompletedPoints: number;
-  // Add initialTotalPoints to the type
   initialTotalPoints: number;
-  // New optional properties for risk score
+  // Add team velocity and sprint load info
+  teamVelocity?: number;
+  sprintLoadInfo?: {
+    type: 'light' | 'heavy' | 'normal';
+    loadPercentage: number;
+    expectedCompletionDay?: string;
+    overcommitPoints?: number;
+  } | null;
+  // Risk score properties
   groomedIssues?: number;
   totalNeedingGrooming?: number;
   riskScore?: number;
   riskLevel?: 'Low' | 'Medium' | 'High';
 };
+
 export type PlanReportData = {
   name: string;
   riskScore: number;
@@ -105,7 +115,12 @@ export type JiraSearchResponse = {
   total: number;
   issues: Array<{
     key: string;
-    fields: Record<string, any>;
+    fields: {
+      summary: string;
+      status: { name: string };
+      assignee?: { displayName: string };
+      [storyPointsField: string]: any;
+    };
   }>;
 };
 
@@ -139,6 +154,7 @@ export type DriftScoreResult = {
   initialTotalPoints: number;
   currentRemainingPoints: number;
   plannedRemainingPoints: number;
+  rawCalculatedRemaining: number; // Added for formatting clarity
   driftScore: number;
   remainingIssues: Array<{
     key: string;
@@ -159,6 +175,16 @@ export type DriftScoreResult = {
   elapsedBusinessDays: number;
   dailyRate: number;
   expectedCompletedPoints: number;
+  teamVelocity?: number; // Added for context
+  sprintLoadInfo?: {
+    // Added for sprint load context
+    type: 'light' | 'heavy' | 'normal';
+    loadPercentage: number;
+    expectedCompletionDay?: string;
+    overcommitPoints?: number;
+  } | null;
+  totalDriftWork: number;
+  completedIssuesSummary?: CompletedIssuesSummary;
 };
 
 export interface ActualRemainingResult {
@@ -234,3 +260,16 @@ export interface SprintScopeChanges {
     }
   >;
 }
+
+export type CompletedIssuesSummary = {
+  totalPoints: number;
+  issues: Array<{
+    key: string;
+    summary: string;
+    points: number;
+    status: string;
+    assignee: string;
+  }>;
+  uniqueIssueCount: number;
+};
+
