@@ -282,48 +282,46 @@ export const formatProgressReport = (
     });
   });
 
-  // NEW: INSERT SPRINT TIMELINE SECTION IMMEDIATELY AFTER COMPLETED ISSUES
-  // Reuse the existing Sprint Timeline calculation and display logic
+  // SPRINT TIMELINE SECTION - Use totalDriftCountedPoints for consistency
   output += `\n${colors.bright}${colors.white}Sprint Timeline:${colors.reset}\n`;
 
-  // Use the total initial sprint points as the denominator
-  const totalSprintPoints = initialTotalPoints;
+  // Use the total drift-counted points as the denominator
+  const currentTotalPoints
+   = currentRemainingPoints + completedPoints;
 
-  // Calculate percentages using total sprint points
+  // Calculate percentages using drift-counted total points
   const workCompletionPercent =
-    totalSprintPoints > 0
-      ? Math.min(100, Math.round((totalCompletedPoints / totalSprintPoints) * 100))
+    currentTotalPoints > 0
+      ? Math.min(100, Math.round((completedPoints / currentTotalPoints) * 100))
       : 0;
 
   const expectedCompletionPercent =
     elapsedBusinessDays === totalSprintBusinessDays
       ? 100
-      : Math.round((expectedCompletedPoints / initialTotalPoints) * 100);
+      : Math.round((expectedCompletedPoints / currentTotalPoints) * 100);
 
   // Calculate the bars
   const timelineWidth = 40;
   const workCompletedBar = '='
     .repeat(Math.round((workCompletionPercent / 100) * timelineWidth))
     .padEnd(timelineWidth);
-    const expectedProgressBar = '='
+  const expectedProgressBar = '='
     .repeat(Math.round((expectedCompletionPercent / 100) * timelineWidth))
     .padEnd(timelineWidth);
-  
-  
+
   // Status line and interpretation logic
   const aheadOrBehind = driftScore > 0 ? 'behind' : driftScore < 0 ? 'ahead' : 'on track';
   const differenceAmount = Math.abs(driftScore).toFixed(1);
   const statusColor = driftScore > 0 ? colors.red : driftScore < 0 ? colors.green : colors.blue;
 
   // Display the timeline
-  output += `  Completed:    [${statusColor}${workCompletedBar}${colors.reset}] ${workCompletionPercent}% (${totalCompletedPoints} of ${totalSprintPoints} total points)\n`;
-  output += `  Expected:     [${colors.yellow}${expectedProgressBar}${colors.reset}] ${expectedCompletionPercent}% (${Math.min(expectedCompletedPoints, initialTotalPoints)} of ${initialTotalPoints} total points)\n`;
+  output += `  Completed:    [${statusColor}${workCompletedBar}${colors.reset}] ${workCompletionPercent}% (${completedPoints} of ${currentTotalPoints} total points)\n`;
+  output += `  Expected:     [${colors.yellow}${expectedProgressBar}${colors.reset}] ${expectedCompletionPercent}% (${expectedCompletedPoints} of ${currentTotalPoints} total points)\n`;
 
   // Status line using pre-calculated drift score
   output += `  Status: Team is ${statusColor}${differenceAmount} points ${aheadOrBehind}${colors.reset} expected pace (Day ${elapsedBusinessDays} of ${totalSprintBusinessDays})\n`;
 
-  // NEW: INSERT DRIFT SCORE SECTION IMMEDIATELY AFTER SPRINT TIMELINE
-  // Drift Score section
+  // DRIFT SCORE SECTION
   output += `\n${colors.bright}${colors.yellow}➤➤ ${colors.reset}${colors.bright}Drift Score${colors.reset}${colors.reset} (Less is best): ${driftColor}${driftScore}${colors.reset} = [${colors.yellow}${expectedCompletedPoints} expected completed${colors.reset}] - [${colors.blue}${totalCompletedPoints} actual completed${colors.reset}]\n`;
 
   // Drift score interpretation
@@ -337,7 +335,7 @@ export const formatProgressReport = (
   }
   output += `  ${colors.dim}Interpretation:${colors.reset} ${driftColor}${driftExplanation}${colors.reset}\n`;
 
-  // Remaining planned calculation
+  // REMAINING PLANNED SECTION
   output += `\n${colors.bright}Remaining Planned (${colors.green}${plannedRemainingPoints}${colors.reset}):${colors.reset}\n`;
   output += `  ${colors.dim}Initial Points:${colors.reset} ${colors.bright}${initialTotalPoints}${colors.reset}\n`;
   output += `  ${colors.dim}Sprint Duration:${colors.reset} ${colors.bright}${totalSprintBusinessDays}${colors.reset} business days\n`;
@@ -371,7 +369,14 @@ export const formatProgressReport = (
     output += `  ${colors.dim}Expected Remaining:${colors.reset} ${initialTotalPoints} - ${expectedCompletedPoints} = ${colors.green}${plannedRemainingPoints}${colors.reset} points\n`;
   }
 
-  // Add Sprint Scope Changes section if available
+  // Add a note explaining the difference between initial points and current points
+  if (scopeChanges && scopeChanges.netPointChange !== 0) {
+    const changeDirection = scopeChanges.netPointChange > 0 ? 'increased' : 'decreased';
+    const absChange = Math.abs(scopeChanges.netPointChange);
+    output += `  ${colors.dim}Note:${colors.reset} ${colors.yellow}Initial commitment was ${initialTotalPoints} points. Sprint scope has ${changeDirection} by ${absChange} points to ${currentTotalPoints} total points.${colors.reset}\n`;
+  }
+
+  // SPRINT SCOPE CHANGES SECTION
   if (scopeChanges) {
     output += `\n${colors.bright}${colors.white}Sprint Scope Changes:${colors.reset}\n`;
 
@@ -448,21 +453,6 @@ export const formatProgressReport = (
     }
   }
 
-  // Sprint Timeline section
-  output += `\n${colors.bright}${colors.white}Sprint Timeline:${colors.reset}\n`;
-
-  // Calculate total essentially done points
-  const essentiallyDonePoints = remainingIssues
-    .filter((issue) => finishLineStatuses.includes(issue.status))
-    .reduce((sum, issue) => sum + issue.points, 0);
-
-  // // Calculate total completed points
-  // const totalCompletedPoints =
-  //   completedPoints +
-  //   remainingIssues
-  //     .filter((issue) => finishLineStatuses.includes(issue.status))
-  //     .reduce((sum, issue) => sum + issue.points, 0);
-
   // ENHANCED: Special case message for light sprints that are behind
   if (
     plannedRemainingPoints === 0 &&
@@ -473,7 +463,7 @@ export const formatProgressReport = (
     output += `  ${colors.yellow}Based on team velocity, all work should be completed by day ${sprintLoadInfo.expectedCompletionDay}, but ${currentRemainingPoints} points remain.${colors.reset}\n`;
   }
 
-  // Sprint details
+  // SPRINT DETAILS SECTION
   output += `\n${colors.bright}${colors.white}Sprint Details:${colors.reset}\n`;
   output += `  ${colors.dim}Initial Sprint Points:${colors.reset} ${colors.bright}${initialTotalPoints}${colors.reset}\n`;
   output += `  ${colors.green}Completed Points:${colors.reset} ${colors.bright}${completedPoints}${colors.reset}\n`;

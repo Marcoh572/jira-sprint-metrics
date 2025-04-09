@@ -94,53 +94,73 @@ export async function getSprintScopeChanges(
   client: JiraClient,
   sprint: SprintData,
   boardConfig: BoardConfig,
-  initialTotalPoints: number, // Add this parameter to use the already calculated initialTotalPoints
+  initialTotalPoints: number,
 ): Promise<SprintScopeChanges> {
-  const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
+  const isFutureSprint = sprint.state === 'future';
 
-  // Get the sprint's start date
+  // If it's a future sprint, return a minimal, placeholder changes object
+  if (isFutureSprint) {
+    return {
+      initialPoints: initialTotalPoints,
+      currentPoints: initialTotalPoints,
+      netPointChange: 0,
+      currentIssueCount: 0,
+
+      // Empty/minimal added issues tracking
+      addedIssueCount: 0,
+      addedIssues: [],
+      addedPoints: 0,
+      addedByAssignee: {},
+
+      // Empty removed issues tracking
+      removedIssueCount: 0,
+      removedIssues: [],
+      removedPoints: 0,
+      removedByAssignee: {},
+    };
+  }
+
+  const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
   const sprintStartDate = new Date(sprint.startDate);
 
-  // 1. Get all issues currently in the sprint
-  const currentQuery = encodeURIComponent(`sprint = ${sprint.id}`);
+  // Comprehensive query to get all current sprint issues
+  const currentQuery = encodeURIComponent(`sprint = "${sprint.name}" ORDER BY created ASC`);
+
   const currentResponse = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${currentQuery}&fields=key,summary,${storyPointsField},status,assignee,created&maxResults=500`,
+    `/rest/api/3/search?jql=${currentQuery}&fields=key,summary,${storyPointsField},status,assignee,created,changelog&expand=changelog&maxResults=500`,
   );
 
-  const currentIssues = currentResponse.data.issues.map((issue) => ({
-    key: issue.key,
-    summary: issue.fields.summary || 'No summary',
-    points: issue.fields[storyPointsField] || 0,
-    status: issue.fields.status?.name || 'Unknown',
-    assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
-    created: issue.fields.created ? new Date(issue.fields.created) : new Date(),
-  }));
+  // Detailed issue mapping with sprint assignment tracking
+  const currentIssues = currentResponse.data.issues.map((issue) => {
+    const sprintAssignmentDetails = extractSprintAssignmentDetails(
+      issue,
+      sprint.name,
+      sprintStartDate,
+    );
 
-  // 2. Since we can't reliably determine added/removed issues with JQL,
-  // we'll use a simpler approach based on comparing current points with initial points
+    return {
+      key: issue.key,
+      summary: issue.fields.summary || 'No summary',
+      points: issue.fields[storyPointsField] || 0,
+      status: issue.fields.status?.name || 'Unknown',
+      assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+      created: issue.fields.created ? new Date(issue.fields.created) : new Date(),
+      sprintAssignmentDetails,
+    };
+  });
 
   // Calculate current total points
   const currentPoints = currentIssues.reduce((sum, issue) => sum + issue.points, 0);
-
-  // We already have initialTotalPoints from the drift calculation
-
-  // Calculate the point difference
   const pointDifference = currentPoints - initialTotalPoints;
 
-  // 3. For added issues, we'll use issues created after sprint start as a best guess
-  // This isn't perfect, but it's a reasonable approximation without JQL history access
+  // Identify issues added to the sprint after start
   const addedIssues = currentIssues
-    .filter((issue) => issue.created > sprintStartDate)
-    .map(({ created, ...rest }) => rest);
+    .filter((issue) => issue.sprintAssignmentDetails.wasAddedAfterSprintStart)
+    .map(({ sprintAssignmentDetails, ...rest }) => rest);
 
   const addedPoints = addedIssues.reduce((sum, issue) => sum + issue.points, 0);
 
-  // 4. For removed issues, we can't directly query them, so we'll estimate
-  // If pointDifference is negative, some issues were likely removed
-  // If it's positive but less than addedPoints, some were likely both added and removed
-  const estimatedRemovedPoints = Math.max(0, addedPoints - pointDifference);
-
-  // 5. Group added issues by assignee
+  // Group added issues by assignee
   const addedByAssignee: Record<string, { count: number; points: number; issues: any[] }> = {};
   addedIssues.forEach((issue) => {
     const assignee = issue.assignee;
@@ -151,38 +171,6 @@ export async function getSprintScopeChanges(
     addedByAssignee[assignee].points += issue.points;
     addedByAssignee[assignee].issues.push(issue);
   });
-
-  // 6. Since we can't identify specific removed issues, create a placeholder
-  const removedIssues = [];
-
-  // Try to get a better estimate of removed issues by looking at the changelog
-  // But only if we have reason to believe issues were removed (estimatedRemovedPoints > 0)
-  const removedByAssignee: Record<string, { count: number; points: number; issues: any[] }> = {};
-  if (estimatedRemovedPoints > 0) {
-    // Add a placeholder for unidentified removed issues
-    removedIssues.push({
-      key: 'N/A',
-      summary: 'Issues removed from sprint (details not available)',
-      points: estimatedRemovedPoints,
-      status: 'Unknown',
-      assignee: 'Unknown',
-    });
-
-    // Add a placeholder entry in removedByAssignee
-    removedByAssignee['Unknown'] = {
-      count: 1,
-      points: estimatedRemovedPoints,
-      issues: [
-        {
-          key: 'N/A',
-          summary: 'Issues removed from sprint (details not available)',
-          points: estimatedRemovedPoints,
-          status: 'Unknown',
-          assignee: 'Unknown',
-        },
-      ],
-    };
-  }
 
   return {
     initialPoints: initialTotalPoints,
@@ -195,9 +183,47 @@ export async function getSprintScopeChanges(
     addedPoints,
     addedByAssignee,
 
-    removedIssueCount: removedIssues.length,
-    removedIssues,
-    removedPoints: estimatedRemovedPoints,
-    removedByAssignee,
+    // Placeholder for removed issues (complex to determine precisely)
+    removedIssueCount: 0,
+    removedIssues: [],
+    removedPoints: 0,
+    removedByAssignee: {},
+  };
+}
+
+// Enhanced sprint assignment detection
+function extractSprintAssignmentDetails(issue: any, sprintName: string, sprintStartDate: Date) {
+  // Default return if no changelog or complex history
+  const defaultResult = {
+    wasAddedAfterSprintStart: false,
+    sprintAssignmentDate: null,
+  };
+
+  // No changelog or malformed issue
+  if (!issue.changelog || !issue.changelog.histories) {
+    return defaultResult;
+  }
+
+  // Find sprint assignment history
+  const sprintAssignmentHistory = issue.changelog.histories
+    .filter((history: any) =>
+      history.items.some(
+        (item: any) => item.field === 'Sprint' && item.toString.includes(sprintName),
+      ),
+    )
+    .sort((a: any, b: any) => new Date(b.created).getTime() - new Date(a.created).getTime());
+
+  // If no sprint assignment found
+  if (sprintAssignmentHistory.length === 0) {
+    return defaultResult;
+  }
+
+  // Get the most recent sprint assignment
+  const latestSprintAssignment = sprintAssignmentHistory[0];
+  const sprintAssignmentDate = new Date(latestSprintAssignment.created);
+
+  return {
+    wasAddedAfterSprintStart: sprintAssignmentDate > sprintStartDate,
+    sprintAssignmentDate: sprintAssignmentDate,
   };
 }

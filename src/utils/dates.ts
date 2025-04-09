@@ -84,6 +84,15 @@ export function formatBusinessDaysBreakdown(
   const current = new Date(currentDate);
   current.setHours(0, 0, 0, 0);
 
+  const isFutureSprint = startDate.getTime() > current.getTime();
+  console.log('formatBusinessDaysBreakdown  > isFutureSprint:', isFutureSprint);
+
+  console.log('Start Date:', startDate);
+  console.log('Current Date:', current);
+  console.log('Start Date Time:', startDate.getTime());
+  console.log('Current Date Time:', current.getTime());
+  console.log('Start Date > Current Date:', startDate > current);
+
   // Helper function to format dates as YYYY-MM-DD
   const formatDate = (date: Date) => {
     // Check if the date is valid before trying to convert it
@@ -106,35 +115,46 @@ export function formatBusinessDaysBreakdown(
 
   // Build the breakdown string
   let breakdown = `\n${colors.bright}${colors.white}Business Days Breakdown:${colors.reset}\n`;
-  breakdown += `  ${colors.dim}Sprint Start:${colors.reset} ${colors.bright}${formatDate(start)}${colors.reset}\n`;
+  breakdown += `  ${colors.dim}Sprint Start:${colors.reset} ${
+    isFutureSprint
+      ? `${colors.yellow}Future Sprint${colors.reset}`
+      : `${colors.bright}${formatDate(startDate)}${colors.reset}`
+  }\n`;
+  breakdown += `  ${colors.dim}Sprint End:${colors.reset} ${colors.bright}${formatDate(endDate)}${colors.reset}\n`;
 
-  // Display the current date, noting if it's time-shifted
-  if (isTimeShifted) {
-    const actualDateStr = formatDate(current);
-    const shiftedDateStr = formatDate(shiftedDate);
-
-    breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${shiftedDateStr}${colors.reset} ${colors.yellow}[Time-shifted from ${actualDateStr}, ${timeShift > 0 ? '+' : ''}${timeShift} business days]${colors.reset}\n`;
+  if (isFutureSprint) {
+    breakdown += `  ${colors.yellow}Sprint Status: Upcoming Future Sprint${colors.reset}\n`;
+    breakdown += `  ${colors.dim}Planned Dates:${colors.reset} ${colors.bright}${formatDate(start)} - ${formatDate(end)}${colors.reset} `;
+    breakdown += `${colors.dim}(${totalSprintBusinessDays} business days)${colors.reset}\n`;
   } else {
-    // For non-time-shifted dates
-    breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${formatDate(current)}${colors.reset}\n`;
+    // Display the current date, noting if it's time-shifted
+    if (isTimeShifted) {
+      const actualDateStr = formatDate(current);
+      const shiftedDateStr = formatDate(shiftedDate);
+
+      breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${shiftedDateStr}${colors.reset} ${colors.yellow}[Time-shifted from ${actualDateStr}, ${timeShift > 0 ? '+' : ''}${timeShift} business days]${colors.reset}\n`;
+    } else {
+      // For non-time-shifted dates
+      breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${formatDate(current)}${colors.reset}\n`;
+    }
+
+    breakdown += `  ${colors.dim}Sprint End:${colors.reset} ${colors.bright}${formatDate(end)}${colors.reset}\n`;
+
+    // Display elapsed business days
+    breakdown += `  ${colors.dim}Business Days Elapsed:${colors.reset} ${colors.bright}${elapsedBusinessDays}${colors.reset}`;
+
+    // Add a note if time-shifted
+    if (isTimeShifted) {
+      breakdown += ` ${colors.yellow}(includes time shift effect)${colors.reset}`;
+    }
+    breakdown += `\n`;
+
+    breakdown += `  ${colors.dim}Total Sprint Business Days:${colors.reset} ${colors.bright}${totalSprintBusinessDays}${colors.reset}\n`;
+
+    // Calculate calendar days elapsed
+    const calendarDays = Math.round((current.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+    breakdown += `  ${colors.dim}Calendar Days Elapsed:${colors.reset} ${colors.bright}${calendarDays}${colors.reset}\n`;
   }
-
-  breakdown += `  ${colors.dim}Sprint End:${colors.reset} ${colors.bright}${formatDate(end)}${colors.reset}\n`;
-
-  // Display elapsed business days
-  breakdown += `  ${colors.dim}Business Days Elapsed:${colors.reset} ${colors.bright}${elapsedBusinessDays}${colors.reset}`;
-
-  // Add a note if time-shifted
-  if (isTimeShifted) {
-    breakdown += ` ${colors.yellow}(includes time shift effect)${colors.reset}`;
-  }
-  breakdown += `\n`;
-
-  breakdown += `  ${colors.dim}Total Sprint Business Days:${colors.reset} ${colors.bright}${totalSprintBusinessDays}${colors.reset}\n`;
-
-  // Calculate calendar days elapsed
-  const calendarDays = Math.round((current.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-  breakdown += `  ${colors.dim}Calendar Days Elapsed:${colors.reset} ${colors.bright}${calendarDays}${colors.reset}\n`;
 
   return breakdown;
 }

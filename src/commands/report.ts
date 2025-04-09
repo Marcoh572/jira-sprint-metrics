@@ -345,6 +345,10 @@ async function generateProgressReport(
   // Always get sprint scope changes
   let scopeChanges: SprintScopeChanges | undefined;
   try {
+    console.log(
+      ' > JSON.stringify(sprint, null, 2):',
+      JSON.stringify(sprint, null, 2),
+    );
     scopeChanges = await getSprintScopeChanges(client, sprint, boardConfig, initialTotalPoints);
   } catch (error) {
     console.error('Unable to fetch sprint scope changes:', error);

@@ -206,6 +206,9 @@ export const calculateDriftScore = async (
 
     // Get the team velocity - prioritize sprint-specific value, then board default, then calculate
     const teamVelocity = sprintConfig?.teamVelocity ?? boardConfig.defaultTeamVelocity;
+    const completedPoints = completedIssuesSummary.totalPoints;
+
+    const currentTotalPoints = currentRemainingPoints + completedPoints;
 
     // Existing sprint burndown and velocity calculations
     let plannedRemainingPoints;
@@ -216,9 +219,9 @@ export const calculateDriftScore = async (
     if (teamVelocity) {
       // If team velocity is specified, use it to calculate daily rate
       dailyRate = teamVelocity / totalSprintBusinessDays;
-      expectedCompletedPoints = expectedCompletedPoints = Math.min(
-        initialTotalPoints,
-        Math.max(0, (elapsedBusinessDays / totalSprintBusinessDays) * initialTotalPoints),
+      expectedCompletedPoints = Math.min(
+        currentTotalPoints, // KEY CHANGE: Use current total points
+        (elapsedBusinessDays / totalSprintBusinessDays) * currentTotalPoints,
       );
 
       // Calculate expected completion day for light sprints
@@ -279,7 +282,7 @@ export const calculateDriftScore = async (
       driftScore,
       remainingIssues,
       completedIssues: completedIssuesSummary.issues,
-      completedPoints: completedIssuesSummary.totalPoints,
+      completedPoints,
       totalSprintBusinessDays,
       elapsedBusinessDays,
       dailyRate,
