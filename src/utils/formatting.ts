@@ -1,3 +1,4 @@
+import { formatFinishLineBreakdown } from '../format/formatFinishLineBreakdown';
 import { BoardConfig, ProgressReportData, SprintData, SprintScopeChanges } from '../types';
 import { colors } from './colors';
 import { formatBusinessDaysBreakdown } from './dates';
@@ -44,6 +45,7 @@ export const formatProgressReport = (
     expectedCompletionDay?: string;
     overcommitPoints?: number;
   } | null,
+  sprintState?: string,
 ): string => {
   // Add this function definition near the top of the function, before use
   const sortStatusKeys = (statuses: string[]): string[] => {
@@ -238,7 +240,7 @@ export const formatProgressReport = (
   });
 
   // Convert back to an array
-  const uniqueCompletedIssues = Array.from(uniqueCompletedIssuesMap.values());
+  const uniqueCompletedIssues = completedIssues;
 
   // Group completed issues by status
   const completedByStatus: Record<
@@ -286,8 +288,7 @@ export const formatProgressReport = (
   output += `\n${colors.bright}${colors.white}Sprint Timeline:${colors.reset}\n`;
 
   // Use the total drift-counted points as the denominator
-  const currentTotalPoints
-   = currentRemainingPoints + completedPoints;
+  const currentTotalPoints = currentRemainingPoints + completedPoints;
 
   // Calculate percentages using drift-counted total points
   const workCompletionPercent =
@@ -334,6 +335,12 @@ export const formatProgressReport = (
     driftExplanation = 'The team is exactly on track with expected progress.';
   }
   output += `  ${colors.dim}Interpretation:${colors.reset} ${driftColor}${driftExplanation}${colors.reset}\n`;
+
+  output += formatFinishLineBreakdown(
+    uniqueCompletedIssues, // Use all completed issues
+    colors,
+    boardConfig?.finishLineStatuses, // Pass the finishLineStatuses from boardConfig
+  );
 
   // REMAINING PLANNED SECTION
   output += `\n${colors.bright}Remaining Planned (${colors.green}${plannedRemainingPoints}${colors.reset}):${colors.reset}\n`;
@@ -477,6 +484,7 @@ export const formatProgressReport = (
     totalSprintBusinessDays,
     colors,
     timeShift,
+    sprintState, // Pass the sprint state
   );
 
   return output;

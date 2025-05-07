@@ -293,14 +293,14 @@ async function generateProgressReport(
   const dailyRate = progressData.dailyRate;
   const expectedCompletedPoints = progressData.expectedCompletedPoints;
 
-  // Since getProgressData doesn't return all the detailed data we need,
-  // we need to fetch the remaining and completed issues separately
-
   // Use the predefined story points field from board config
   const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
+  const finishLineStatuses = boardConfig.finishLineStatuses || [];
 
-  // Get current remaining issues
-  const currentRemainingQuery = encodeURIComponent(`sprint = "${sprint.name}" AND status != Done`);
+  // Get current remaining issues (those NOT in finishLineStatuses)
+  const currentRemainingQuery = encodeURIComponent(
+    `sprint = "${sprint.name}" AND NOT status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
+  );
   const currentRemainingResponse = await client.get<JiraSearchResponse>(
     `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
   );
@@ -313,13 +313,15 @@ async function generateProgressReport(
     assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
   }));
 
-  // Get completed issues
-  const completedQuery = encodeURIComponent(`sprint = "${sprint.name}" AND status = Done`);
-  const completedResponse = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${completedQuery}&fields=${storyPointsField},status,summary,assignee`,
+  // Get completed issues (those with status in finishLineStatuses)
+  const finishLineQuery = encodeURIComponent(
+    `sprint = "${sprint.name}" AND status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
+  );
+  const finishLineResponse = await client.get<JiraSearchResponse>(
+    `/rest/api/3/search?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
   );
 
-  const completedIssues = completedResponse.data.issues.map((issue) => ({
+  const completedIssues = finishLineResponse.data.issues.map((issue) => ({
     key: issue.key,
     summary: issue.fields.summary,
     points: issue.fields[storyPointsField] || 0,
@@ -345,10 +347,7 @@ async function generateProgressReport(
   // Always get sprint scope changes
   let scopeChanges: SprintScopeChanges | undefined;
   try {
-    console.log(
-      ' > JSON.stringify(sprint, null, 2):',
-      JSON.stringify(sprint, null, 2),
-    );
+    console.log(' > JSON.stringify(sprint, null, 2):', JSON.stringify(sprint, null, 2));
     scopeChanges = await getSprintScopeChanges(client, sprint, boardConfig, initialTotalPoints);
   } catch (error) {
     console.error('Unable to fetch sprint scope changes:', error);
@@ -374,18 +373,19 @@ async function generateProgressReport(
     completedIssues,
     completedPoints,
     totalSprintBusinessDays,
-    elapsedBusinessDays, // Use the time-shifted value from progressData
+    elapsedBusinessDays,
     dailyRate,
-    expectedCompletedPoints, // Use the time-shifted value from progressData
+    expectedCompletedPoints,
     startDate,
     endDate,
     new Date(), // Current date (before time shifting)
     timeShift,
     boardConfig,
     scopeChanges,
-    rawCalculatedRemaining, // Pass the raw calculated value
-    teamVelocity, // Pass the team velocity
-    sprintLoadInfo, // Pass the sprint load info
+    rawCalculatedRemaining,
+    teamVelocity,
+    sprintLoadInfo,
+    sprint.state, // Pass the sprint state
   );
 
   console.log(report);

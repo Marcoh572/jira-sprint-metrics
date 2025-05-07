@@ -52,66 +52,33 @@ export const calculateDriftScore = async (
     // Renamed from essentiallyDoneStatuses
     const finishLineStatuses = boardConfig.finishLineStatuses || [];
 
-    // Adjust the query to use the new term
-    const finishLineQuery = encodeURIComponent(
-      `sprint = "${sprintData.name}" AND status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
-    );
-
     // Handle backward compatibility - if futureDays is set but timeShift isn't
     const timeShift = options.timeShift !== undefined ? options.timeShift : options.futureDays;
 
     // Use the predefined story points field
     const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
 
-    // NEW: Comprehensive method for calculating completed issues with robust deduplication
-    const calculateCompletedIssuesSummary = async (
-      completedResponse: JiraResponse<JiraSearchResponse>,
-      essentiallyDoneResponse: JiraResponse<JiraSearchResponse>,
+    // Simplified method for calculating completed issues from finishLineStatuses
+    const calculateCompletedIssuesSummary = (
+      finishLineResponse: JiraResponse<JiraSearchResponse>,
       storyPointsField: string,
     ) => {
-      // Map to track unique issues across different statuses
-      const completedIssuesMap = new Map<
-        string,
-        {
-          key: string;
-          summary: string;
-          points: number;
-          status: string;
-          assignee: string;
-        }
-      >();
+      // Process issues into a consistent format
+      const issues = finishLineResponse.data.issues.map((issue) => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        points: issue.fields[storyPointsField] || 0,
+        status: issue.fields.status.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+      }));
 
-      // Process issues, prioritizing most informative entry
-      const processIssues = (response: JiraResponse<JiraSearchResponse>) => {
-        response.data.issues.forEach((issue) => {
-          const processedIssue = {
-            key: issue.key,
-            summary: issue.fields.summary,
-            points: issue.fields[storyPointsField] || 0,
-            status: issue.fields.status.name,
-            assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
-          };
-
-          // Intelligent deduplication logic
-          const existingIssue = completedIssuesMap.get(issue.key);
-          if (!existingIssue || processedIssue.points > existingIssue.points) {
-            completedIssuesMap.set(issue.key, processedIssue);
-          }
-        });
-      };
-      // Process both completed and essentially done issues
-      processIssues(completedResponse);
-      processIssues(essentiallyDoneResponse);
-
-      // Convert map to array and calculate total points
-      // Convert map to array and calculate total points
-      const issues = Array.from(completedIssuesMap.values());
+      // Calculate total points
       const totalPoints = issues.reduce((sum, issue) => sum + issue.points, 0);
 
       return {
         totalPoints,
         issues,
-        uniqueIssueCount: completedIssuesMap.size,
+        uniqueIssueCount: issues.length,
       };
     };
 
@@ -133,30 +100,23 @@ export const calculateDriftScore = async (
     // Use the filtered total points instead of calculating from raw data
     const currentRemainingPoints = actualRemainingData.totalPoints;
 
-    // Get completed issues (strictly "Done")
-    const completedQuery = encodeURIComponent(`sprint = "${sprintData.name}" AND status = Done`);
-    const completedResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${completedQuery}&fields=${storyPointsField},status,summary,assignee`,
+    // Get all completed issues (those with status in finishLineStatuses)
+    const finishLineQuery = encodeURIComponent(
+      `sprint = "${sprintData.name}" AND status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
+    );
+    const finishLineResponse = await client.get<JiraSearchResponse>(
+      `/rest/api/3/search?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
     );
 
-    // Get essentially done issues
-    const essentiallyDoneQuery = encodeURIComponent(
-      `sprint = "${sprintData.name}" AND status IN (${boardConfig?.finishLineStatuses?.map((status) => `"${status}"`).join(',')})`,
-    );
-    const essentiallyDoneResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${essentiallyDoneQuery}&fields=${storyPointsField},status,summary,assignee`,
-    );
-
-    // Calculate comprehensive completed issues summary
-    const completedIssuesSummary = await calculateCompletedIssuesSummary(
-      completedResponse,
-      essentiallyDoneResponse,
-      storyPointsField, // Add this parameter
+    // Calculate completed issues summary with the simplified function
+    const completedIssuesSummary = calculateCompletedIssuesSummary(
+      finishLineResponse,
+      storyPointsField,
     );
 
     // Collect detailed information for remaining issues
     const currentRemainingQuery = encodeURIComponent(
-      `sprint = "${sprintData.name}" AND status != Done`,
+      `sprint = "${sprintData.name}" AND NOT status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
     );
     const currentRemainingResponse = await client.get<JiraSearchResponse>(
       `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,

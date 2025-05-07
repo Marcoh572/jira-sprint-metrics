@@ -65,7 +65,7 @@ export function calculateBusinessHours(start: Date, end: Date): number {
   return businessHours;
 }
 
-export function formatBusinessDaysBreakdown(
+export const formatBusinessDaysBreakdown = (
   startDate: Date,
   endDate: Date,
   currentDate: Date,
@@ -73,88 +73,95 @@ export function formatBusinessDaysBreakdown(
   totalSprintBusinessDays: number,
   colors: any,
   timeShift?: number,
-): string {
-  // Normalize dates to midnight
-  const start = new Date(startDate);
-  start.setHours(0, 0, 0, 0);
+  sprintState?: string, // Add the sprint state parameter
+): string => {
+  let output = '';
 
-  const end = new Date(endDate);
-  end.setHours(0, 0, 0, 0);
+  const formattedStartDate = startDate.toISOString().split('T')[0];
+  const formattedEndDate = endDate.toISOString().split('T')[0];
 
-  const current = new Date(currentDate);
-  current.setHours(0, 0, 0, 0);
+  // Create a copy of currentDate to avoid modifying the original
+  let effectiveDate = new Date(currentDate.getTime());
 
-  const isFutureSprint = startDate.getTime() > current.getTime();
+  // Apply time shift if specified
+  if (timeShift) {
+    // We don't need to recalculate this here because elapsedBusinessDays already accounts for the time shift
+    // Just log the information
+    console.log(
+      `Using time-shifted date (${timeShift > 0 ? 'forward' : 'backward'} by ${Math.abs(timeShift)} business days)`,
+    );
+  }
+
+  // Debug output that shows the comparison
+  const startTime = startDate.getTime();
+  const currentTime = effectiveDate.getTime();
+  const isFutureSprint = startTime > currentTime;
+
   console.log('formatBusinessDaysBreakdown  > isFutureSprint:', isFutureSprint);
+  console.log('Start Date:', startDate.toISOString());
+  console.log('Current Date:', effectiveDate.toISOString());
+  console.log('Start Date Time:', startTime);
+  console.log('Current Date Time:', currentTime);
+  console.log('Start Date > Current Date:', startTime > currentTime);
+  console.log('Sprint State:', sprintState || 'unknown');
+  console.log('Time Shift:', timeShift || 'none');
+  console.log('Elapsed Business Days:', elapsedBusinessDays);
 
-  console.log('Start Date:', startDate);
-  console.log('Current Date:', current);
-  console.log('Start Date Time:', startDate.getTime());
-  console.log('Current Date Time:', current.getTime());
-  console.log('Start Date > Current Date:', startDate > current);
+  output += '\n';
+  output += 'Business Days Breakdown:\n';
 
-  // Helper function to format dates as YYYY-MM-DD
-  const formatDate = (date: Date) => {
-    // Check if the date is valid before trying to convert it
-    if (!(date instanceof Date) || isNaN(date.getTime())) {
-      return 'Not scheduled'; // Or any other appropriate message
-    }
-    return date.toISOString().split('T')[0]; // YYYY-MM-DD format
-  };
-  // Determine if current date has been time-shifted
-  const isTimeShifted = timeShift !== undefined && timeShift !== 0;
+  // Calculate the days between today and the sprint start
+  const todayMs = effectiveDate.getTime();
+  const startDateMs = startDate.getTime();
+  const diffDays = Math.round((todayMs - startDateMs) / (1000 * 60 * 60 * 24));
 
-  // Calculate the shifted date for display
-  let shiftedDate = current;
-  if (isTimeShifted) {
-    shiftedDate =
-      timeShift > 0
-        ? addBusinessDays(current, timeShift)
-        : subtractBusinessDays(current, Math.abs(timeShift));
-  }
+  const sprintStartStr =
+    isFutureSprint && sprintState !== 'active' ? 'Future Sprint' : formattedStartDate;
+  output += `  ${colors.dim}Sprint Start:${colors.reset} ${sprintStartStr}\n`;
+  output += `  ${colors.dim}Sprint End:${colors.reset} ${formattedEndDate}\n`;
 
-  // Build the breakdown string
-  let breakdown = `\n${colors.bright}${colors.white}Business Days Breakdown:${colors.reset}\n`;
-  breakdown += `  ${colors.dim}Sprint Start:${colors.reset} ${
-    isFutureSprint
-      ? `${colors.yellow}Future Sprint${colors.reset}`
-      : `${colors.bright}${formatDate(startDate)}${colors.reset}`
-  }\n`;
-  breakdown += `  ${colors.dim}Sprint End:${colors.reset} ${colors.bright}${formatDate(endDate)}${colors.reset}\n`;
+  // Determine sprint status based on state first, then use time-aware calculations as fallback
+  let sprintStatus;
 
-  if (isFutureSprint) {
-    breakdown += `  ${colors.yellow}Sprint Status: Upcoming Future Sprint${colors.reset}\n`;
-    breakdown += `  ${colors.dim}Planned Dates:${colors.reset} ${colors.bright}${formatDate(start)} - ${formatDate(end)}${colors.reset} `;
-    breakdown += `${colors.dim}(${totalSprintBusinessDays} business days)${colors.reset}\n`;
-  } else {
-    // Display the current date, noting if it's time-shifted
-    if (isTimeShifted) {
-      const actualDateStr = formatDate(current);
-      const shiftedDateStr = formatDate(shiftedDate);
-
-      breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${shiftedDateStr}${colors.reset} ${colors.yellow}[Time-shifted from ${actualDateStr}, ${timeShift > 0 ? '+' : ''}${timeShift} business days]${colors.reset}\n`;
+  // If time-shifting, we need to adjust our determination of the sprint status
+  if (timeShift) {
+    // With time shifting, we need to determine what the status would be on the shifted date
+    if (elapsedBusinessDays < 0) {
+      // If time-shifted to before the sprint start
+      sprintStatus = 'Upcoming Future Sprint (Time-Shifted View)';
+    } else if (elapsedBusinessDays >= totalSprintBusinessDays) {
+      // If time-shifted to after the sprint end
+      sprintStatus = 'Completed Past Sprint (Time-Shifted View)';
     } else {
-      // For non-time-shifted dates
-      breakdown += `  ${colors.dim}Current Date:${colors.reset} ${colors.bright}${formatDate(current)}${colors.reset}\n`;
+      // If time-shifted to during the sprint
+      sprintStatus = 'Active Current Sprint (Time-Shifted View)';
     }
-
-    breakdown += `  ${colors.dim}Sprint End:${colors.reset} ${colors.bright}${formatDate(end)}${colors.reset}\n`;
-
-    // Display elapsed business days
-    breakdown += `  ${colors.dim}Business Days Elapsed:${colors.reset} ${colors.bright}${elapsedBusinessDays}${colors.reset}`;
-
-    // Add a note if time-shifted
-    if (isTimeShifted) {
-      breakdown += ` ${colors.yellow}(includes time shift effect)${colors.reset}`;
+  } else {
+    // Without time shifting, prioritize the sprint state from Jira
+    if (sprintState === 'active') {
+      sprintStatus = 'Active Current Sprint';
+    } else if (sprintState === 'future') {
+      sprintStatus = 'Upcoming Future Sprint';
+    } else if (sprintState === 'closed') {
+      sprintStatus = 'Completed Past Sprint';
+    } else {
+      // Fallback to timestamp-based determination if sprint state is unknown
+      if (elapsedBusinessDays <= 0 && isFutureSprint) {
+        sprintStatus = 'Upcoming Future Sprint';
+      } else if (todayMs > endDate.getTime()) {
+        sprintStatus = 'Completed Past Sprint';
+      } else {
+        sprintStatus = 'Active Current Sprint';
+      }
     }
-    breakdown += `\n`;
-
-    breakdown += `  ${colors.dim}Total Sprint Business Days:${colors.reset} ${colors.bright}${totalSprintBusinessDays}${colors.reset}\n`;
-
-    // Calculate calendar days elapsed
-    const calendarDays = Math.round((current.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-    breakdown += `  ${colors.dim}Calendar Days Elapsed:${colors.reset} ${colors.bright}${calendarDays}${colors.reset}\n`;
   }
 
-  return breakdown;
-}
+  output += `  ${colors.dim}Sprint Status:${colors.reset} ${sprintStatus}\n`;
+  output += `  ${colors.dim}Planned Dates:${colors.reset} ${formattedStartDate} - ${formattedEndDate} (${totalSprintBusinessDays} business days)\n`;
+
+  if (timeShift && timeShift !== 0) {
+    output += `  ${colors.yellow}Note: Reporting time shifted by ${timeShift} business days${colors.reset}\n`;
+  }
+
+  return output;
+};
