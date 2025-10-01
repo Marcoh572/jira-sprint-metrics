@@ -78,7 +78,7 @@ export const getInitialSprintScope = async (
     // Use a simple query that just looks at all issues in the sprint
     const jql = encodeURIComponent(`sprint = ${sprintId}`);
 
-    const response = await client.get<{ total: number }>(`/rest/api/3/search?jql=${jql}`);
+    const response = await client.get<{ total: number }>(`/rest/api/2/search/jql?jql=${jql}`);
 
     return response.data.total;
   } catch (error: unknown) {

@@ -85,7 +85,7 @@ export const setupDebugCommand = (program: Command) => {
 
         // Find an issue with story points to test
         const response = await client.get<JiraSearchResponse>(
-          `/rest/api/3/search?jql=project = CLN&maxResults=1`,
+          `/rest/api/2/search/jql?jql=project = CLN&maxResults=1`,
         );
 
         if (response.data.issues.length > 0) {

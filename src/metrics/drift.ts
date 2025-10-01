@@ -85,7 +85,7 @@ export const calculateDriftScore = async (
     // Get initial sprint scope (total story points at sprint start)
     const initialScopeQuery = encodeURIComponent(`sprint = ${sprintData.id}`);
     const initialScopeResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${initialScopeQuery}&fields=${storyPointsField},status,summary,assignee`,
+      `/rest/api/2/search/jql?jql=${initialScopeQuery}&fields=${storyPointsField},status,summary,assignee`,
     );
 
     // Calculate initial total points
@@ -105,7 +105,7 @@ export const calculateDriftScore = async (
       `sprint = "${sprintData.name}" AND status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
     );
     const finishLineResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
+      `/rest/api/2/search/jql?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
     );
 
     // Calculate completed issues summary with the simplified function
@@ -119,7 +119,7 @@ export const calculateDriftScore = async (
       `sprint = "${sprintData.name}" AND NOT status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
     );
     const currentRemainingResponse = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
+      `/rest/api/2/search/jql?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
     );
 
     // Collect detailed information for remaining issues
