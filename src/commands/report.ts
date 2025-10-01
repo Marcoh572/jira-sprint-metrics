@@ -302,7 +302,7 @@ async function generateProgressReport(
     `sprint = "${sprint.name}" AND NOT status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
   );
   const currentRemainingResponse = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
+    `/rest/api/2/search/jql?jql=${currentRemainingQuery}&fields=${storyPointsField},status,summary,assignee`,
   );
 
   const remainingIssues = currentRemainingResponse.data.issues.map((issue) => ({
@@ -318,7 +318,7 @@ async function generateProgressReport(
     `sprint = "${sprint.name}" AND status IN (${finishLineStatuses.map((status) => `"${status}"`).join(',')})`,
   );
   const finishLineResponse = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
+    `/rest/api/2/search/jql?jql=${finishLineQuery}&fields=${storyPointsField},status,summary,assignee`,
   );
 
   const completedIssues = finishLineResponse.data.issues.map((issue) => ({

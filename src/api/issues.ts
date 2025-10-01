@@ -11,7 +11,7 @@ export const getActualRemaining = async (
     const storyPointsField = boardConfig.customFields?.storyPoints || 'customfield_10016';
     const jql = encodeURIComponent(`sprint = "${sprintName}" AND status != Done`);
     const response = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${jql}&fields=assignee,${storyPointsField},status,summary`,
+      `/rest/api/2/search/jql?jql=${jql}&fields=assignee,${storyPointsField},status,summary`,
     );
 
     const issues = response.data.issues;

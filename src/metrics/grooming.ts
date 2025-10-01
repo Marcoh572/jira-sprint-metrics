@@ -14,7 +14,7 @@ export const getGroomingMetrics = async (
     // Query to get all issues in the sprint with point information
     const jql = encodeURIComponent(`sprint = "${sprintName}"`);
     const response = await client.get<JiraSearchResponse>(
-      `/rest/api/3/search?jql=${jql}&fields=summary,status,assignee,${storyPointsField}&maxResults=500`,
+      `/rest/api/2/search/jql?jql=${jql}&fields=summary,status,assignee,${storyPointsField}&maxResults=500`,
     );
 
     // Process all issues for detailed breakdown

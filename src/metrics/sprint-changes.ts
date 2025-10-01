@@ -27,7 +27,7 @@ export async function getInitialSprintContent(
 
   // Query Jira API
   const response = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${jql}&fields=key,summary,${storyPointsField},status,assignee`,
+    `/rest/api/2/search/jql?jql=${jql}&fields=key,summary,${storyPointsField},status,assignee`,
   );
 
   return response.data.issues.map((issue) => ({
@@ -56,7 +56,7 @@ export async function getSimplifiedSprintChanges(
   // Get all issues currently in the sprint
   const jql = encodeURIComponent(`sprint = ${sprint.id}`);
   const response = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${jql}&fields=${storyPointsField},assignee&maxResults=500`,
+    `/rest/api/2/search/jql?jql=${jql}&fields=${storyPointsField},assignee&maxResults=500`,
   );
 
   const currentIssueCount = response.data.issues.length;
@@ -127,7 +127,7 @@ export async function getSprintScopeChanges(
   const currentQuery = encodeURIComponent(`sprint = "${sprint.name}" ORDER BY created ASC`);
 
   const currentResponse = await client.get<JiraSearchResponse>(
-    `/rest/api/3/search?jql=${currentQuery}&fields=key,summary,${storyPointsField},status,assignee,created,changelog&expand=changelog&maxResults=500`,
+    `/rest/api/2/search/jql?jql=${currentQuery}&fields=key,summary,${storyPointsField},status,assignee,created,changelog&expand=changelog&maxResults=500`,
   );
 
   // Detailed issue mapping with sprint assignment tracking
