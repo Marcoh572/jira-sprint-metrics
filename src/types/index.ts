@@ -8,6 +8,15 @@ export type AxiosError = {
   message: string;
 };
 
+export type JiraAuthInfo = {
+  success: boolean;
+  jira_email: string;
+  jira_api_token: string;
+  jira_auth_token: string;
+  jira_site: string;
+  jira_site_id: string;
+}
+
 // Sprint-specific configuration
 export type SprintConfig = {
   totalBusinessDays?: number;

@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import { loadConfig } from './config/config';
-import { createJiraClient } from './api/client';
+import { createJiraClient, jiraOauthLogin, getJiraAuth } from './api/client';
 import { setupReportCommand } from './commands/report';
 import { setupBoardsCommand } from './commands/boards';
 import { setupSprintsCommand } from './commands/sprints';
@@ -19,28 +19,32 @@ program
 // Load configuration
 const config = loadConfig();
 
-// Create Jira client
-const client = createJiraClient(config);
+// Perform OAuth login to get authorization
+jiraOauthLogin().then( async () => {
+  // Create Jira client
+  const authInfo = await getJiraAuth();  
+  const client =  createJiraClient(config, authInfo);
+  
+  // Store config and client on the program instance for commands to access
+  (program as any).config = config;
+  (program as any).client = client;
 
-// Store config and client on the program instance for commands to access
-(program as any).config = config;
-(program as any).client = client;
+  // Setup all commands
+  setupReportCommand(program);
+  setupBoardsCommand(program);
+  setupSprintsCommand(program);
+  setupDebugCommand(program);
 
-// Setup all commands
-setupReportCommand(program);
-setupBoardsCommand(program);
-setupSprintsCommand(program);
-setupDebugCommand(program);
+  // Main function to run the program
+  const main = () => {
+    program.parse(process.argv);
+  };
 
-// Main function to run the program
-const main = () => {
-  program.parse(process.argv);
-};
-
-// Execute main if this is the main module
-if (require.main === module) {
-  main();
-}
+  // Execute main if this is the main module
+  if (require.main === module) {
+    main();
+  }
+});
 
 // Export functions for testing and reuse
 export { loadConfig, createJiraClient };
